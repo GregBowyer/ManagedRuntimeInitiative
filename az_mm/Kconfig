@@ -1,0 +1,12 @@
+config AZUL_MM_MODULE
+	tristate "Azul Memory Management Module"
+	default m
+	help
+	  This is the famous Azul Memory Management Module.  We know of
+	  no memory manager produced by any other software foundry which
+	  took so much loving care to design and implement.  Our exclusive
+	  Large Page Shattering produces an efficiency of TLB flushing,
+	  a non-fragmenty-ness, and a non-pausiness you will find in no
+	  other Linux kernel at any price. Written by our original all
+	  natural software engineers using the choicest Macs, Nehalems
+	  and Best Barley Malt.

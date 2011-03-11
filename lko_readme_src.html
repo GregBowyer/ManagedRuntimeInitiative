@@ -1,0 +1,143 @@
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=us-ascii">
+</head>
+<body dir="LTR" lang="en-US">
+<h1 align="LEFT"><font face="Arial"><font size="4">Managed Runtime Initiative Platform README</font></font></h1>
+<p><font face="Arial"><font size="2">This README file contains documentation for the Platform portion of the Managed Runtime Initiative (www.ManagedRuntime.org). The Initiative is an open software development and integration initiative launched by Azul Systems
+ that exposes new functionality and interfaces to improve managed runtime execution. An open-source software reference implementation for Java(TM) on Linux consists of a JVM derived from OpenJDK 6, and a Platform that consists of a set of enhanced loadable
+ Linux Kernel Objects (LKO) and associated system libraries and utilities.</font></font></p>
+<p><font face="Arial"><font size="2">In order to achieve the most optimal runtime experience, it is recommended to build the Platform before building the JVM components. For more information on how to build and configure the JVM component, review the &quot;Managed
+ Runtime Initiative JVM README&quot; which is included in the MRI-J source files.</font></font></p>
+<p><font face="Arial"><font size="2">Contents</font></font></p>
+<p><font face="Arial"><font size="2">The source code for the Platform consists of the following source packages:</font></font></p>
+<ul>
+<li>
+<p><font face="Arial"><font size="2">Linux kernel patch -- enables enhanced memory management used by the JVM.</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">Linux alternate memory management kernel object</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">System library allowing C code to use the enhanced facilities of the kernel.</font></font></p>
+</li></ul>
+<p><font face="Arial"><font size="2">The platform package is delivered in two forms.</font></font></p>
+<ul>
+<li>
+<p><font face="Arial"><font size="2">The SRPM package is provided for relative ease of configuration and contains a complete Linux kernel source tree based on Fedora Core 12, pre-patched with the Managed Runtime Initiative extensions. All source code in this
+ package is delivered as source RPMs (SRPMs).</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">The SRC package is provided for ease of code inspection. This package contains a Linux kernel patch in standard patch format, and tar archives containing the source code for the LKOs and system libraries.</font></font></p>
+</li></ul>
+<p><font face="Arial"><font size="2">System Requirements</font></font></p>
+<p><font face="Arial"><font size="2">Hardware:</font></font></p>
+<ul>
+<li>
+<p><font face="Arial"><font size="2">IntelXeon 5500, 5600, 6500, 7500 and above</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">AMD Opteron 8300 and above (or Opteron 6100 and above)</font></font></p>
+</li></ul>
+<p><font face="Arial"><font size="2">Software:</font></font></p>
+<p><font face="Arial"><font size="2">At the current time, the Fedora Core 12 distribution is the basis for Managed Runtime Initiative and we recommend that it should be used by the prudent developer as their base as well. Kernel enhancements have been built
+ and tested against the current FC12 kernel, v2.6.32-9, as well as the stable kernel.org 2.6.34 tree. The patch provided can be applied to either source base.</font></font></p>
+<p><font face="Arial"><font size="2">Downloading and Extracting the Source Files</font></font></p>
+<p><font face="Arial"><font size="2">The kernel patch is a patch file in the usual format. The kernel modules and libraries are provided as compressed tarballs.</font></font></p>
+<p><font face="Arial"><font size="2">Building the Linux Kernel Objects</font></font></p>
+<p><font face="Arial"><font size="2">You should already have a familiarity with building and installing Linux source distributions. In order to use the LKOs, you will need to:</font></font></p>
+<ol>
+<li>
+<p><font face="Arial"><font size="2">Patch your Linux kernel.</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">Set up the LKOs</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">Set up the C system libraries.</font></font></p>
+</li><li>
+<p><font face="Arial"><font size="2">Reserve physical memory</font></font></p>
+</li></ol>
+<p><font face="Arial"><font size="2">Refer to the man pages for detailed descriptions of the LKOs.</font></font></p>
+<p><font face="Arial"><font size="2">Patching the Kernel</font></font></p>
+<p><font face="Arial"><font size="2">Acquire the desired base Linux kernel source and path it using the provided patch.</font></font></p>
+<p><font face="Arial"><font size="2">You can configure your Linux kernel using the &quot;make menuconfig&quot; command. Make sure to enable:</font></font></p>
+<p><font face="Arial"><font size="2">&quot;Memory Management Modules&quot; (CONFIG_MM_MODULES)</font></font></p>
+<p>&#8220;<font face="Arial"><font size="2">Physical Memory Management Modules&quot; (CONFIG_PMEM_MODULES)</font></font></p>
+<p><font face="Arial"><font size="2">The two memory options are found under &quot;Processor type and features&quot;.</font></font></p>
+<p><font face="Arial"><font size="2">Make and install the kernel in the standard manner using the &quot;make install&quot; command. See the Linux Kernel Documentation Index (www.kernel.org/docs) for information about patching the Linux kernel.</font></font></p>
+<p><font face="Arial"><font size="2">Building the LKOs</font></font></p>
+<p><font face="Arial"><font size="2">The LKOs are set up to built in the standard manner. It is suggested to boot the newly-patched kernel and then build each LKO using the following command:</font></font></p>
+<p><font face="Arial"><font size="2">make KERNELDIR=/lib/modules/`uname -r`/build</font></font></p>
+<p><font face="Arial"><font size="2">Set up the two LKOs using the &quot;make install&quot; command. See the Linux Kernel Documentation Index (www.kernel.org/docs) for information about building Linux source code.</font></font></p>
+<p><font face="Arial"><font size="2">Building the System Libraries</font></font></p>
+<p><font face="Arial"><font size="2">To build the system libraries (libaznix and libsysmisc), type &quot;make AZNIX_API_VERSION=200&quot; in the directory where each library is located.</font></font></p>
+<p><font face="Arial"><font size="2">Reserving Physical Memory</font></font></p>
+<p><font face="Arial"><font size="2">The Linux memory management kernel object allows physical memory to be reserved for use by the JVM component. In order to reserve physical memory, the az_pmem_reserve() call must be used.</font></font></p>
+<p><font face="Arial"><font size="2">Memory reservations remove usable memory from a system, and different environments may wish to make these reservations in different ways. A sample program, azpmem, is included in the platform package (azpmem.tgz) to provide
+ the ability to reserve memory by calling it as &quot;azpmem --reserve-pages --npages &lt;num-2MB-pages&gt;&quot;. Conversely, memory can be unreserved by the use of the --unreserve-pages flag.</font></font></p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<p><br>
+<br>
+</p>
+<div type="FOOTER">
+<p></p>
+</div>
+</body>
+</html>

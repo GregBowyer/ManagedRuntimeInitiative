@@ -54,8 +54,13 @@ break;
 } \
 break;
 
+#if defined(HAVE_UNLOCKED_IOCTL)
+static int azul_ioctl(struct file *file,
+		unsigned int cmd, unsigned long arg)
+#else
 static int azul_ioctl(struct inode *inode, struct file *file,
 		unsigned int cmd, unsigned long arg)
+#endif
 {
 	void __user *argp = (void __user *)arg;
 	int res = -EINVAL;
@@ -118,7 +123,11 @@ static int azul_ioctl(struct inode *inode, struct file *file,
 
 const struct file_operations azul_fops = {
 	.owner		= THIS_MODULE,
+#if defined(HAVE_UNLOCKED_IOCTL)
+	.unlocked_ioctl = azul_ioctl,
+#else
 	.ioctl		= azul_ioctl,
+#endif
 };
 
 struct miscdevice azul_dev = {

@@ -5,6 +5,8 @@ SHELL = /bin/sh
 PACKAGE = libsysmisc
 VERSION = 0.0.1
 
+AZNIX_API_VERSION=200
+
 prefix = /usr/local
 exec_prefix = ${prefix}
 
@@ -15,14 +17,15 @@ pkgincludedir = $(includedir)/os
 LIBTOOL = libtool
 CC = gcc
 CXX = g++
-CXXFLAGS = -D__STDC_LIMIT_MACROS -fcheck-new
-CPPFLAGS = -D_REENTRANT -D_XOPEN_SOURCE=600 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE -DX86_64 -D__STDC_FORMAT_MACROS
+CXXFLAGS = -D__STDC_LIMIT_MACROS -fcheck-new -DAZNIX_API_VERSION=${AZNIX_API_VERSION}
+CPPFLAGS = -D_REENTRANT -D_XOPEN_SOURCE=600 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE \
+		   -DX86_64 -D__STDC_FORMAT_MACROS -DAZNIX_API_VERSION=${AZNIX_API_VERSION}
 LDFLAGS =
 INCLUDES = -I. -I$(includedir)
 LDFLAGS =
-LTCOMPILE = $(LIBTOOL) --mode=compile $(CC) $(INCLUDES) $(CPPFLAGS) $(CFLAGS)
+LTCOMPILE = $(LIBTOOL) --tag=CC --mode=compile $(CC) $(INCLUDES) $(CPPFLAGS) $(CFLAGS)
 CCLD = $(CC)
-LINK = $(LIBTOOL) --mode=link $(CCLD) $(CFLAGS) $(LDFLAGS) -o $@
+LINK = $(LIBTOOL) --tag=CC --mode=link $(CCLD) $(CFLAGS) $(LDFLAGS) -o $@
 CFLAGS = -g -Wall -Werror -m64 -pipe -fmessage-length=0
 
 lib_LTLIBRARIES = libsysmisc.la

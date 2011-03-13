@@ -67,22 +67,21 @@ void log_message(uint64_t facility_priority, log_flags_t flags, const char *form
     va_end(ap);
 }
 
-
 // This is basically the same as log_message except the priority is always LOG_ERR and
 // (so facility should NOT include a priority code) and error_code is supplied as well.
 void log_error(uint64_t facility, sys_return_t error_code, const char *format, ...) {
     char buf[SYSLOG_MAX_MGSLEN];
     size_t len = strlen(_ident);
     if (len > 0 ) {
-        strncpy(buf, _ident, SYSLOG_MAX_MGSLEN);
-        strncat(buf, ": ", SYSLOG_MAX_MGSLEN);
+        strncpy(buf, _ident, SYSLOG_MAX_MGSLEN - len);
+        strncat(buf, ": ", SYSLOG_MAX_MGSLEN - (len + 2));
         len = strlen(buf);
     } else {
         buf[0] = '\0';
     }
 
-    strncat(buf, error_message(error_code), SYSLOG_MAX_MGSLEN);
-    strncat(buf, ": ", SYSLOG_MAX_MGSLEN);
+    strncat(buf, error_message(error_code), SYSLOG_MAX_MGSLEN - len);
+    strncat(buf, ": ", SYSLOG_MAX_MGSLEN - (len + 2));
     len = strlen(buf);
 
     va_list ap;

@@ -1,0 +1,17 @@
+# Ignore patterns (bless you github (http://github.com/github/gitignore)
+# Compiled Object files
+*.slo
+*.lo
+*.o
+
+# Compiled Dynamic libraries
+*.so
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.swp
+*.bak
+*.orig
+

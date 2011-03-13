@@ -1,0 +1,58 @@
+#
+# Makefile
+#
+# Compile all components using this Makefile
+#
+
+TARGET_PLATFORM  = azlinux-x86_64
+SANDBOX         ?= $(CURDIR)/sandbox
+FROM_AVX_DIR    ?= /home/buildmaster/nightly/AVM/main-dev-x86/in_progress/avm-x86-668/sandbox/fromavx
+
+DIRS = azsys jdk hotspot
+
+default all: installhdrs build installlibs
+
+installhdrs::
+	mkdir -p $(SANDBOX)
+	cp -Rf $(FROM_AVX_DIR) $(SANDBOX)
+	for dir in ${DIRS}; do \
+		$(MAKE) -C $$dir TARGET_PLATFORM=$(TARGET_PLATFORM) SANDBOX=$(SANDBOX) installhdrs || exit 1; \
+		echo make installhdrs in $$dir PASSED ; \
+	done
+
+build::
+	for dir in ${DIRS}; do \
+		$(MAKE) -C $$dir TARGET_PLATFORM=$(TARGET_PLATFORM) SANDBOX=$(SANDBOX) || exit 1; \
+		$(MAKE) -C $$dir TARGET_PLATFORM=$(TARGET_PLATFORM) SANDBOX=$(SANDBOX) install || exit 1; \
+		echo make in $$dir PASSED ; \
+	done
+
+AVX_LIB_DIR        = $(SANDBOX)/fromavx/fc12/lib
+AVX_LIBNAMES       = libaznixnonproxied libsysmiscnonproxied
+AVX_LIBS           = $(AVX_LIBNAMES:%=%.so)
+AVX_LIBS_G         = $(AVX_LIBNAMES:%=%_g.so)
+
+AVM_LIB_DIR        = $(SANDBOX)/azlinux/lib/x86_64
+AVM_LIBNAMES       = libazsys
+AVM_LIBS           = $(AVM_LIBNAMES:%=%.so)
+AVM_LIBS_G         = $(AVM_LIBNAMES:%=%_g.so)
+
+LIB_INSTALL_DIR    = $(SANDBOX)/azlinux/jdk1.6
+
+installlibs::
+	for lib in $(AVX_LIBS); do \
+		cp -f $(AVX_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/product/jre/lib/amd64/server/ ; \
+		cp -f $(AVX_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/optimized/jre/lib/amd64/server/ ; \
+	done ;
+	for lib in $(AVX_LIBS_G); do \
+		cp -f $(AVX_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/debug/jre/lib/amd64/server/ ; \
+		cp -f $(AVX_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/fastdebug/jre/lib/amd64/server/ ; \
+	done ;
+	for lib in $(AVM_LIBS); do \
+		cp -f $(AVM_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/product/jre/lib/amd64/server/ ; \
+		cp -f $(AVM_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/optimized/jre/lib/amd64/server/ ; \
+	done ;
+	for lib in $(AVM_LIBS_G); do \
+		cp -f $(AVM_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/debug/jre/lib/amd64/server/ ; \
+		cp -f $(AVM_LIB_DIR)/$$lib $(LIB_INSTALL_DIR)/fastdebug/jre/lib/amd64/server/ ; \
+	done ;

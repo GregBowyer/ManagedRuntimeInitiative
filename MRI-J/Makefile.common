@@ -1,0 +1,68 @@
+#
+# Makefile.common
+#
+# Common variables used by the make system in different components.
+# Set these appropriately on systems where these paths do not exist.
+#
+
+# AVX stuff
+
+AVX_INCLUDE_DIR ?= $(SANDBOX)/fromavx/fc12/include
+AZNIX_API_VERSION ?= 200
+
+# Build versions
+
+MILESTONE ?= b16-sourcedrop
+BUILD_NUMBER ?= 00
+JDK_BUILD_NUMBER ?= 00
+JDK_VERSION ?= 1.6.0_0
+VERSION_MAJOR ?= 0
+VERSION_MINOR ?= 0
+VERSION_SP ?= 0
+VERSION_PATCH ?= 0
+VERSION_SUFFIX ?= -$(MILESTONE)
+
+# hotspot
+# Exactly version 4.3.0 of GCC is required to build hotspot.
+# Point GCC_DIR below to a GCC 4.3.0 bin directory.
+GCC_DIR ?= /home/buildmaster/sw/gcc/4.3.0/linux/x86_64/bin
+BINUTILS_DIR ?= /home/buildmaster/sw/binutils/2.18/linux/x86_64/bin
+## JAVA_HOME needed for build.java
+JAVA_HOME ?= /home/jinteg/openjdk/binaries/java-6-openjdk
+
+# jdk
+
+export GNUMAKE ?= /home/buildmaster/sw/gmake/3.80/Linux-2.4/i686
+# Exactly version 4.2.4 of GCC is required to build jdk.
+# Point ALT_COMPILER_PATH below to a GCC 4.2.4 bin directory.
+export ALT_COMPILER_PATH ?= /home/buildmaster/sw/gcc/fc11/4.2.4/release/gcc-4.2.4/bin
+export ANT_HOME ?= /home/buildmaster/sw/ant/1.6.3
+export FINDBUGS_HOME ?= /home/buildmaster/sw/findbugs/1.3.9
+export ALT_BOOTDIR ?= $(JAVA_HOME)
+
+# Common definitions
+
+MKDIRS ?= mkdir -p
+INSTALL ?= cp -rf
+RM_DASH_RF ?= rm -rf
+AR ?= ar
+TARGET_ARCHIVE_PREFIX ?= lib
+TARGET_ARCHIVE_SUFFIX ?= .a
+TARGET_SHARED_LIBRARY_PREFIX ?= lib
+TARGET_SHARED_LIBRARY_SUFFIX ?= .so
+TARGET_LDFLAGS_WHOLE_ARCHIVE ?= -Xlinker --whole-archive
+TARGET_LDFLAGS_NO_WHOLE_ARCHIVE ?= -Xlinker --no-whole-archive
+
+FUNDAMENTAL.FLAGS.WARN ?= -Wall -Werror
+FUNDAMENTAL.FLAGS.OPT_DEBUG ?= -O3
+FUNDAMENTAL.FLAGS.OPT_OPTIMIZED ?= -O0
+
+# By default CC is set to cc.
+CC  = $(ALT_COMPILER_PATH)/gcc
+CXX = $(ALT_COMPILER_PATH)/g++
+
+ifeq ($(TARGET_PLATFORM), azlinux-x86_64)
+TARGET_OSN ?= azlinux
+TARGET_ISA ?= x86_64
+endif
+

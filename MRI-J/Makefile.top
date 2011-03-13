@@ -6,7 +6,7 @@
 
 TARGET_PLATFORM  = azlinux-x86_64
 SANDBOX         ?= $(CURDIR)/sandbox
-FROM_AVX_DIR    ?= /home/buildmaster/nightly/AVM/main-dev-x86/in_progress/avm-x86-668/sandbox/fromavx
+FROM_AVX_DIR    ?= ../libaznix-0.0.1
 
 DIRS = azsys jdk hotspot
 

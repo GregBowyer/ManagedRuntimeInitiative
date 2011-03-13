@@ -25,18 +25,18 @@ VERSION_SUFFIX ?= -$(MILESTONE)
 # hotspot
 # Exactly version 4.3.0 of GCC is required to build hotspot.
 # Point GCC_DIR below to a GCC 4.3.0 bin directory.
-GCC_DIR ?= /home/buildmaster/sw/gcc/4.3.0/linux/x86_64/bin
-BINUTILS_DIR ?= /home/buildmaster/sw/binutils/2.18/linux/x86_64/bin
-## JAVA_HOME needed for build.java
-JAVA_HOME ?= /home/jinteg/openjdk/binaries/java-6-openjdk
+#GCC_DIR ?= /home/buildmaster/sw/gcc/4.3.0/linux/x86_64/bin
+#BINUTILS_DIR ?= /home/buildmaster/sw/binutils/2.18/linux/x86_64/bin
+JAVA_HOME ?= /opt/sun-jdk-1.6.0.24/
 
 # jdk
 
-export GNUMAKE ?= /home/buildmaster/sw/gmake/3.80/Linux-2.4/i686
+#export GNUMAKE ?= /home/buildmaster/sw/gmake/3.80/Linux-2.4/i686
 # Exactly version 4.2.4 of GCC is required to build jdk.
 # Point ALT_COMPILER_PATH below to a GCC 4.2.4 bin directory.
-export ALT_COMPILER_PATH ?= /home/buildmaster/sw/gcc/fc11/4.2.4/release/gcc-4.2.4/bin
-export ANT_HOME ?= /home/buildmaster/sw/ant/1.6.3
+#export ALT_COMPILER_PATH ?= /home/buildmaster/sw/gcc/fc11/4.2.4/release/gcc-4.2.4/bin
+#export ANT_HOME ?= /home/buildmaster/sw/ant/1.6.3
+export ANT_HOME ?= $(ANT_HOME)
 export FINDBUGS_HOME ?= /home/buildmaster/sw/findbugs/1.3.9
 export ALT_BOOTDIR ?= $(JAVA_HOME)
 
@@ -58,8 +58,8 @@ FUNDAMENTAL.FLAGS.OPT_DEBUG ?= -O3
 FUNDAMENTAL.FLAGS.OPT_OPTIMIZED ?= -O0
 
 # By default CC is set to cc.
-CC  = $(ALT_COMPILER_PATH)/gcc
-CXX = $(ALT_COMPILER_PATH)/g++
+#CC  = $(ALT_COMPILER_PATH)/gcc
+#CXX = $(ALT_COMPILER_PATH)/g++
 
 ifeq ($(TARGET_PLATFORM), azlinux-x86_64)
 TARGET_OSN ?= azlinux

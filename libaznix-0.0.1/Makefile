@@ -45,9 +45,11 @@ libaznix_la_OBJECTS = \
 	az_pgroup.lo
 
 libsyscalls_la_SOURCES = \
+	syscall_err.c \
 	syscalls.s
 
 libsyscalls_la_OBJECTS = \
+	syscall_err.lo \
 	syscalls.lo
 
 libs: $(lib_LTLIBRARIES)

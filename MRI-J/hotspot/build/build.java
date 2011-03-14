@@ -3694,8 +3694,8 @@ class build0 {
       " -L " + SANDBOX_LIB_DIR + "/1.6" +
       " -L " + AVX_LIB_DIR;
   // FIXME - Need to add libazti libazprof and libazpr
-  static String LDLIBS   = " -lpthread -lrt -ldl " + LIB_DIRS + " -z origin -Wl,-rpath -Wl,$ORIGIN/. -lsysmisc -laznix -lsyscalls ";
-  static String LDLIBS_G = " -lpthread -lrt -ldl " + LIB_DIRS + " -z origin -Wl,-rpath -Wl,$ORIGIN/. -lsysmisc -laznix -lsyscalls ";
+  static String LDLIBS   = " -lpthread -lrt -ldl " + LIB_DIRS + " -z origin -Wl,-rpath -Wl,$ORIGIN/. -lazsys -lsysmisc -laznix ";
+  static String LDLIBS_G = " -lpthread -lrt -ldl " + LIB_DIRS + " -z origin -Wl,-rpath -Wl,$ORIGIN/. -lazsys_g -lsysmisc -laznix ";
 
   // --- Building the AVM from libjvm.a
   static final String PRE_LINK_CMD = GCC_X86+" -shared -rdynamic " + " -Wl,--verbose | sed -e '/^======/,/^======/!d' -e '/^======/d;s/0\\( + SIZEOF_HEADERS\\)/0x38400000\\1/' > %dst.lds ; ";

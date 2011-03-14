@@ -958,7 +958,7 @@ static jboolean xshmAttachFailed = JNI_FALSE;
 
 int J2DXErrHandler(Display *display, XErrorEvent *xerr) {
     int ret = 0;
-    if (xerr->minor_code == X_ShmAttach) {
+    if (xerr->minor_code == XShmAttach) {
         xshmAttachFailed = JNI_TRUE;
     } else {
         ret = (*xerror_saved_handler)(display, xerr);

@@ -1551,7 +1551,7 @@ class build0 {
   static String gcc_warn_optimized() {
     String errors="";
     if ( TARGET_ISA.equals("x86_64") ) {
-        errors=" -Werror=uninitialized";
+        //errors=" -Werror=uninitialized";
     }
     return errors;
   }

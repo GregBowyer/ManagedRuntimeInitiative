@@ -1693,7 +1693,7 @@ class build0 {
   //                    
   // ----------------------------------------------------------------------------
                                    
-  static final String GCC_FLAGS   = "-fpic -fno-rtti -fno-exceptions -pipe -fmessage-length=0 " + GCC_WARN;
+  static final String GCC_FLAGS   = "-fpic -fno-rtti -fno-exceptions -fpermissive -pipe -fmessage-length=0 " + GCC_WARN;
 
 
   static final String GCC_X86   = AZ_SWTOOLS_GCC_X86_DIR + "/g++ -fno-strict-aliasing -Di86pc -DAZPROF_NO_EVENTS " + GCC_FLAGS;

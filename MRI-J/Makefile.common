@@ -7,7 +7,7 @@
 
 # AVX stuff
 
-AVX_INCLUDE_DIR ?= $(SANDBOX)/fromavx/fc12/include
+AVX_INCLUDE_DIR ?= $(SANDBOX)/libaznix-0.0.1/include
 AZNIX_API_VERSION ?= 200
 
 # Build versions
@@ -26,7 +26,9 @@ VERSION_SUFFIX ?= -$(MILESTONE)
 # Exactly version 4.3.0 of GCC is required to build hotspot.
 # Point GCC_DIR below to a GCC 4.3.0 bin directory.
 #GCC_DIR ?= /home/buildmaster/sw/gcc/4.3.0/linux/x86_64/bin
+GCC_DIR ?= /usr/bin
 #BINUTILS_DIR ?= /home/buildmaster/sw/binutils/2.18/linux/x86_64/bin
+BINUTILS_DIR ?= /usr/bin
 JAVA_HOME ?= /opt/sun-jdk-1.6.0.24/
 
 # jdk

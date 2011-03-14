@@ -1697,8 +1697,8 @@ class build0 {
 
 
   static final String GCC_X86   = AZ_SWTOOLS_GCC_X86_DIR + "/g++ -fno-strict-aliasing -Di86pc -DAZPROF_NO_EVENTS " + GCC_FLAGS;
-  static final String STRIP_X86 = AZ_SWTOOLS_X86_DIR + "/x86_64-linux-strip";
-  static final String AR_X86    = AZ_SWTOOLS_X86_DIR + "/x86_64-linux-ar";
+  static final String STRIP_X86 = AZ_SWTOOLS_X86_DIR + "/strip";
+  static final String AR_X86    = AZ_SWTOOLS_X86_DIR + "/ar";
 
   static final String ELFSIGN   = SANDBOX+"/linux/bin/i686/elfsign -k "+SANDBOX+"/linux/keys.private/binpriXX.pem ";
 

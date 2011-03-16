@@ -26,9 +26,8 @@ VERSION_SUFFIX ?= -$(MILESTONE)
 # Exactly version 4.3.0 of GCC is required to build hotspot.
 # Point GCC_DIR below to a GCC 4.3.0 bin directory.
 #GCC_DIR ?= /home/buildmaster/sw/gcc/4.3.0/linux/x86_64/bin
-GCC_DIR ?= /usr/bin
-#BINUTILS_DIR ?= /home/buildmaster/sw/binutils/2.18/linux/x86_64/bin
-BINUTILS_DIR ?= /usr/bin
+GCC_DIR ?= ../build-chain/tools/usr/x86_64-pc-linux-gnu/gcc-bin/4.3.0
+BINUTILS_DIR ?= ../build-chain/tools/usr/x86_64-pc-linux-gnu/binutils-bin/2.18/
 JAVA_HOME ?= /opt/sun-jdk-1.6.0.24/
 
 # jdk
@@ -37,6 +36,7 @@ JAVA_HOME ?= /opt/sun-jdk-1.6.0.24/
 # Exactly version 4.2.4 of GCC is required to build jdk.
 # Point ALT_COMPILER_PATH below to a GCC 4.2.4 bin directory.
 #export ALT_COMPILER_PATH ?= /home/buildmaster/sw/gcc/fc11/4.2.4/release/gcc-4.2.4/bin
+export ALT_COMPILER_PATH ?= ../build-chain/tools/usr/x86_64-pc-linux-gnu/gcc-bin/4.2.4
 #export ANT_HOME ?= /home/buildmaster/sw/ant/1.6.3
 export ANT_HOME ?= $(ANT_HOME)
 export FINDBUGS_HOME ?= /home/buildmaster/sw/findbugs/1.3.9

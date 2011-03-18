@@ -4225,6 +4225,7 @@ err:
 unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 		struct vm_area_struct *aliased_vma)
 {
+	printk("Entered do_az_mreserve\n");
 	struct vm_area_struct * vma;
 	az_mmstate *mms;
 	int az_flags =  MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED;
@@ -4256,8 +4257,10 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 
 	/* Check if requested are overlaps with any existing vm_area: */
 	vma = find_vma_intersection(current->mm, addr, addr + len);
-	if (vma)
+	if (vma) {
+		printk("VMA intersection was detected \n");
 		return -EFAULT;
+	}
 
 	mms = az_mm_mmstate(current->mm);
 	if (!mms || az_mm_init_spinlocks(mms))
@@ -5035,6 +5038,7 @@ long do_az_mflush(unsigned long acct, int flags, size_t *allocated)
 
 int az_ioc_mreserve(unsigned long addr, size_t len, int flags)
 {
+	printk("Entered az_ioc_mreserve\n");
 	unsigned long ret;
 	down_write(&current->mm->mmap_sem);
 	ret = do_az_mreserve(addr, len, flags, NULL);

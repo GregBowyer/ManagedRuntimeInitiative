@@ -65,7 +65,7 @@ static int azul_ioctl(struct inode *inode, struct file *file,
 	void __user *argp = (void __user *)arg;
 	int res = -EINVAL;
 
-	//printk(KERN_INFO "Azul ioctl %08x\n", cmd);
+	printk(KERN_INFO "Azul ioctl %08x\n", cmd);
 
 	switch(cmd) {
 		IOC_CASE(IOC_AZ_MRESERVE, mreserve, a.addr, a.len, a.flags)

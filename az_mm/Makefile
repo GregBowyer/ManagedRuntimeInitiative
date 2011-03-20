@@ -4,7 +4,7 @@
 
 obj-m += azul_mm.o
 
-azul_mm-objs := az_pmem.o az_vmem.o az_mm.o az_mm_ioctl.o
+azul_mm-objs := az_mm_debug.o az_pmem.o az_vmem.o az_mm.o az_mm_ioctl.o
 
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
  

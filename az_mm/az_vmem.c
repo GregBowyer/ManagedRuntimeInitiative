@@ -56,6 +56,7 @@
 #include "az_mm.h"
 #include "az_vmem.h"
 #include "az_pmem.h"
+#include "az_mm_debug.h"
 
 #define AZMM_DISABLE_STATIC_INLINE 1
 
@@ -4258,8 +4259,13 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 	/* Check if requested are overlaps with any existing vm_area: */
 	vma = find_vma_intersection(current->mm, addr, addr + len);
 	if (vma) {
-		printk("VMA intersection was detected \n");
+#ifdef CONFIG_AZMM_DEBUG
+		printk(KERN_WARNING "VMA intersection was detected \n");
+		int ret = az_mm_create_vmem_map_dump(vma);
+		return (ret == 0) ? -EFAULT : ret;
+#else
 		return -EFAULT;
+#endif
 	}
 
 	mms = az_mm_mmstate(current->mm);

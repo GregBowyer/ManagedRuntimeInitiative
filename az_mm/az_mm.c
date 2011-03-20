@@ -58,6 +58,7 @@
 #include "az_vmem.h"
 #include "az_pmem.h"
 #include "az_mm_ioctl.h"
+#include "az_mm_debug.h"
 
 #define AZUL_VERSION "1.0"
 #define DISABLE_STATIC_INLINE 1
@@ -138,6 +139,8 @@ struct pmem_module_struct az_pmem_module = {
 
 static void az_mm_exit(void)
 {
+	// Destroy debugging first incase we hold live references
+	az_mm_debug_destroy();
 	az_pmem_exit();
 }
 
@@ -266,6 +269,8 @@ int __init az_mm_module_init(void)
 	rv = az_mm_init();
 	if (rv)
 		misc_deregister( &azul_dev );
+
+	az_mm_debug_init();
 	return rv;
 }
 

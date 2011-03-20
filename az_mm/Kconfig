@@ -10,3 +10,12 @@ config AZUL_MM_MODULE
 	  other Linux kernel at any price. Written by our original all
 	  natural software engineers using the choicest Macs, Nehalems
 	  and Best Barley Malt.
+
+config AZUL_MM_DEBUG
+	bool "Azul Memory Management Module Debugging"
+	depends on AZUL_MM_MODULE, DEBUGFS
+	help
+	  Enables debugging information from the Azul memory management
+	  module, exports various information into debugFS.
+	  Generally this is not required (or recommended) for anyone not
+	  interested in developing against the Azul MM

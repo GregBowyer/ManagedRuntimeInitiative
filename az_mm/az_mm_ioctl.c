@@ -32,7 +32,6 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/init.h>
-#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 
 #include "az_mm_ioctl.h"

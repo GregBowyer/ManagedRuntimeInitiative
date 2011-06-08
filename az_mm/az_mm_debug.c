@@ -53,7 +53,7 @@ extern int az_mm_create_vmem_map_dump(struct vm_area_struct *vma)
 	int flags = vma->vm_flags;
 	unsigned long ino = 0;
 	unsigned long long pgoff = 0;
-	unsigned long start;
+	unsigned long start, end;
 	dev_t dev = 0;
 	int len;
 
@@ -64,16 +64,18 @@ extern int az_mm_create_vmem_map_dump(struct vm_area_struct *vma)
 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
 	}
 
-	/* don't show the stack guard page */
+	/* We don't show the stack guard page in /proc/maps */
 	start = vma->vm_start;
-	if (vma->vm_flags & VM_GROWSDOWN)
-		if (!vma_stack_continue(vma->vm_prev, vma->vm_start))
-			start += PAGE_SIZE;
+	if (stack_guard_page_start(vma, start))
+		start += PAGE_SIZE;
+	end = vma->vm_end;
+	if (stack_guard_page_end(vma, end))
+		end -= PAGE_SIZE;
 
 	snprintf(buffer, LINE_SIZE, 
 			"%08lx-%08lx %c%c%c%c%c %08llx %02x:%02x %lu %n\n",
-			vma->vm_start,
-			vma->vm_end,
+			start,
+			end,
 			flags & VM_READ ? 'r' : '-',
 			flags & VM_WRITE ? 'w' : '-',
 			flags & VM_EXEC ? 'x' : '-',

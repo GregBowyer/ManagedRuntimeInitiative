@@ -2,8 +2,9 @@
 
 wget http://ftp.gnu.org/gnu/binutils/binutils-2.18.tar.gz
 tar -xvf binutils-2.18.tar.gz
+pushd binutils-2.18
 
-INSTALL_DIR=../../tools
+INSTALL_DIR=$(readlink -f ../../tools)
 
 ./configure --build=x86_64-pc-linux-gnu \
     --host=x86_64-pc-linux-gnu \
@@ -22,3 +23,4 @@ INSTALL_DIR=../../tools
 
 make
 make install
+popd

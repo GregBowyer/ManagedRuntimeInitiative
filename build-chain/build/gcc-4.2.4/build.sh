@@ -3,10 +3,10 @@
 wget http://gcc-uk.internet.bs/releases/gcc-4.2.4/gcc-4.2.4.tar.bz2
 tar -xvf gcc-4.2.4.tar.bz2
 
-INSTALL_DIR=../../tools
+INSTALL_DIR=$(readlink -f ../../tools)
 
-mkdir build_dir
-cd build_dir
+mkdir build_dir-gcc-4.2.4
+cd build_dir-gcc-4.2.4
 
 ../gcc-4.2.4/configure \
     --prefix=${INSTALL_DIR}/usr \
@@ -22,5 +22,5 @@ cd build_dir
     --enable-checking=release --disable-libgcj --enable-languages=c,c++ \
     --enable-shared --enable-threads=posix --enable-__cxa_atexit
 
-make -j5
+make -j16
 make install

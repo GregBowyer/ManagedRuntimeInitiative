@@ -430,9 +430,9 @@ int az_mm_change_protection(struct vm_area_struct *vma,
 }
 
 int az_mm_copy_page_range(struct mm_struct *dst_mm,
-                struct mm_struct *src_mm, struct vm_area_struct *vma)
+		struct mm_struct *src_mm, struct vm_area_struct *vma)
 {
-        return 0;
+	return 0;
 }
 
 int az_mm_probe_mapped(struct vm_area_struct *vma, unsigned long start,
@@ -2436,7 +2436,7 @@ err_fault_unlock:
 	ret = -EFAULT;
 	goto out_unlock;
 }
-    
+
 int az_unshatter(az_mmstate *mms, struct vm_area_struct *vma,
 		unsigned long addr, unsigned long force_addr,
 		unsigned long resource_addr, unsigned long src_addr,
@@ -2763,11 +2763,11 @@ int az_zap_large_pmd(struct vm_area_struct *vma,
 			goto out;
 		goto err_fault;
 	}
-        /* If main and shadow are not the same, bad stuff WILL happen. */
-        if (shadow_pmd &&
+	/* If main and shadow are not the same, bad stuff WILL happen. */
+	if (shadow_pmd &&
 		(!pmd_large_virtual(*shadow_pmd) ||
-        	 !az_same_pmd_page(pmd, shadow_pmd)))
-                goto err_fault;
+	 !az_same_pmd_page(pmd, shadow_pmd)))
+		goto err_fault;
 
 	(*zap_work) -= PMD_PAGE_SIZE;
 
@@ -4300,7 +4300,7 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 				goto err;
 			az_vma_vmstate(vma)->az_mm_flags = az_mm_flags;
 			/* Only dump the original reservation */
-            /* GB ! How to support VM_ALWAYSDUMP behaviour ?
+			/* GB ! How to support VM_ALWAYSDUMP behaviour ?
 			if (aliased_vma) {
 				vma->vm_flags |= AZMM_VM_FLAGS;
 				vma->vm_flags &= ~VM_ALWAYSDUMP;
@@ -4308,10 +4308,10 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 				vma->vm_flags |=
 					(AZMM_VM_FLAGS | VM_ALWAYSDUMP);
 			}
-            */
+			*/
 
-            // GB compile HACK
-            vma->vm_flags |= AZMM_VM_FLAGS;
+			// GB compile HACK
+			vma->vm_flags |= AZMM_VM_FLAGS;
 		} else {
 			/* We somehow didn't get the vma we wanted: */
 			goto err;
@@ -4495,7 +4495,7 @@ int do_az_mprotect(unsigned long addr, size_t len, int prot,
 		return ret;
 	return 0;
 }
-        
+
 int do_az_munmap(unsigned long addr, size_t len, int flags)
 {
 	struct mm_struct *mm = current->mm;

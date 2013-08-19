@@ -1,0 +1,6619 @@
+diff -Nau8r ./linux-mri/.config ./linux-3.10.5/.config
+--- ./linux-mri/.config	2013-08-18 16:26:30.263709183 -0700
++++ ./linux-3.10.5/.config	2013-08-04 19:59:21.950925637 -0700
+@@ -397,18 +397,16 @@
+ CONFIG_SPARSEMEM=y
+ CONFIG_NEED_MULTIPLE_NODES=y
+ CONFIG_HAVE_MEMORY_PRESENT=y
+ CONFIG_SPARSEMEM_EXTREME=y
+ CONFIG_SPARSEMEM_VMEMMAP_ENABLE=y
+ CONFIG_SPARSEMEM_ALLOC_MEM_MAP_TOGETHER=y
+ CONFIG_SPARSEMEM_VMEMMAP=y
+ CONFIG_HAVE_MEMBLOCK=y
+-CONFIG_MM_MODULES=y
+-CONFIG_PMEM_MODULES=y
+ CONFIG_HAVE_MEMBLOCK_NODE_MAP=y
+ CONFIG_ARCH_DISCARD_MEMBLOCK=y
+ # CONFIG_MOVABLE_NODE is not set
+ # CONFIG_HAVE_BOOTMEM_INFO_NODE is not set
+ # CONFIG_MEMORY_HOTPLUG is not set
+ CONFIG_PAGEFLAGS_EXTENDED=y
+ CONFIG_SPLIT_PTLOCK_CPUS=4
+ CONFIG_BALLOON_COMPACTION=y
+diff -Nau8r ./linux-mri/.config.old ./linux-3.10.5/.config.old
+--- ./linux-mri/.config.old	2013-08-18 13:50:23.577429250 -0700
++++ ./linux-3.10.5/.config.old	2013-08-04 19:53:48.183052944 -0700
+@@ -602,16 +602,17 @@
+ CONFIG_YENTA_TI=y
+ CONFIG_YENTA_ENE_TUNE=y
+ CONFIG_YENTA_TOSHIBA=y
+ CONFIG_HOTPLUG_PCI=y
+ # CONFIG_HOTPLUG_PCI_ACPI is not set
+ # CONFIG_HOTPLUG_PCI_CPCI is not set
+ # CONFIG_HOTPLUG_PCI_SHPC is not set
+ # CONFIG_RAPIDIO is not set
++# CONFIG_RAPIDIO_ENUM_BASIC is not set
+ 
+ #
+ # Executable file formats / Emulations
+ #
+ CONFIG_BINFMT_ELF=y
+ CONFIG_COMPAT_BINFMT_ELF=y
+ CONFIG_ARCH_BINFMT_ELF_RANDOMIZE_PIE=y
+ CONFIG_CORE_DUMP_DEFAULT_ELF_HEADERS=y
+diff -Nau8r ./linux-mri/Documentation/mm_modules.txt ./linux-3.10.5/Documentation/mm_modules.txt
+--- ./linux-mri/Documentation/mm_modules.txt	2013-08-18 16:49:39.841444992 -0700
++++ ./linux-3.10.5/Documentation/mm_modules.txt	1969-12-31 16:00:00.000000000 -0800
+@@ -1,283 +0,0 @@
+-Virtual (MM_MODULES) and Physical (PMEM_MODULES) modules for Linux 3.10
+-
+-	Gil Tene <gil@azulsystems.com>
+-
+-In order to support extended functionality for virtual and physical memory,
+-enabling loadable modules to deliver integrated memory management
+-functionality is desirable.
+-
+-Examples of valuable extended functionality can include:
+-
+-- Support for mappings with multiple and mixed page sizes
+-	- Including transitioning of mapped addresses from large to small page
+-	  mappings, or small to large.
+-- Support for very high sustained mapping modification rates:
+-	- Allowing concurrent modifications within the same address space
+-	- Allowing user to [safely] indicate lazy TLB invalidation and
+-	  thereby dramatically reduce per change costs
+-	- Supporting fast, safe application of very large "batch" sets
+-	  of mapping modifications (remaps and mprotects), such that
+-	  all changes become visible within the same, extremely short
+-	  period of time.
+-- Support for large number of disjoint mappings with arbitrary manipulations
+-  at high rates
+-
+-In order to support such functionality, memory management modules need
+-to interact with several points in the virtual and physical memory systems
+-that are "lower" that those of a typical module or driver under previously
+-kernel interfaces. The specific interface points are itemized below.
+-
+-A set of proposed patches against the 3.10 is provided,
+-which creates the appropriate interfaces for module to register with,
+-allowing them to interact with vmas, mm structures and pages through
+-their needed lifecycle transitions, as well as keep state they
+-may need associated with vmas and mm structures.
+-
+-----------------------------------------------------------------------
+-
+-At a high level, the patches represent:
+-
+-Changes to existing data structures:
+-
+-- An added "mm_modules" field to struct mm_struct.
+-
+-- Two added fields to "mm_module_ops" struct vm_area_struct.
+-
+-New data structures:
+-
+-- Four new common data types (struct mm_module_struct,
+-  struct pmem_module_struct, struct pmem_module_operations_struct,
+-  mm_module_operations_struct)
+-
+-Code changes:
+-
+-- changes to add calls into mm_module_ops and pmem_module_ops at
+-  various appropriate locations.
+-
+-- changes to disable or make invalid certain operations (e.g. vma
+-  split, merge, remap) for vmas that are controlled by mm_modules
+-
+-- A change to fault handling to allow handle_mm_fault to return
+-  an indication for SEGV_MAPERR or SEGV_ACCERR (allow for sparsely
+-  mapped, and non-homogeneously protected vmas).
+-
+-- A change to gup_fast (arch/x86/mm/gup.c) to make it safely independent
+-  of any page table locking and invalidation schemes (as long as whatever
+-  they do is safe in an SMP environment), including mechanisms that
+-  may ref-count pages down to 0 before tlb-invalidating their mappings.
+-
+-----------------------------------------------------------------------
+-Note: about need for physical memory support:
+-
+-While virtual memory functionality alone can support some of the 
+-possible extended functionality, high performance functionality 
+-requires physical memory management and control as well. A good example
+-of this is in-process recycling of memory and in-process memory free
+-lists and their use in dramatically dampening TLB invalidate requirements
+-on allocation or deallocation edges. When a system need to sustain 
+-a high rate of new mappings (e.g. 20GB/sec of sustained random, disjoint 
+-map/remap/unmap operations), such in-process physical memory free lists
+-become a must. 
+-
+-----------------------------------------------------------------------
+-Note: About hugetlb
+-
+-To increase the likelihood of usefulness to generic virtual memory
+-functionality additions, the module interface was designed such that
+-the all current hugetlb functionality could be developed as a loadable
+-kernel module under the proposed interface.
+-
+-----------------------------------------------------------------------
+-
+-Some high level design points:
+-
+-- Virtual memory modules (mm_modules) are generally responsible for
+-creating and controlling their own vmas. [whole] vmas can be torn down 
+-by the kernel.
+-
+-- The kernel's "normal" memory manipulation system calls will not modify
+-the bounds of an mm_module managed vma. [i.e. no merging, no splitting,
+-no remapping]. mm_modules may support such functionality through their own
+-entry points.
+-
+-- mm_modules must adhere to the kernel's convention for locking the
+-page table hierarchy for any part of the hierarchy that may be manipulated
+-by other code. While mm_modules may apply private locking schemes
+-to parts of the hierarchy (e.g. below the pmd level), they must do
+-so only with parts of the hierarchy that are know to be completely owned
+-by the module. [e.g. 2MB aligned vmas can separately control locking at
+-the pmd level and below]
+-
+-- mm_modules can carry unique state per mm, and unique state per vma.
+-
+-- mm_modules provide their own fault handling functionality. They may
+-  indicate a need to SEGV with a mapping or protection si_code (sparsely
+-  mapped vas are a good example of this need).
+-
+-- pmem_modules manage their own lists of physical pages, and are expected
+-  to be aware of physical pages that they are supposed to control, even 
+-  when (and especially when) those pages carry a 0 ref count.. They can
+-  do so in any way they want (e.g. a module-private vmemmap mirror, or
+-  one using much larger aligned page sizes).
+-
+-- registered pmem_modules intercept all physical page releases at
+-  put_page() and release_pages(), such that when a page is ref-counted down
+-  to 0, the pmem_module would pick it up before it reaches the system's
+-  normal free lists.
+-
+-- pmem_modules are expected to support hot_plug functionality. When physical
+-  memory is added to the system, all current pmem_modules must adjust their
+-  internal maps of physical memory to be able to correctly handle physical
+-  pages of the newly discovered range.  
+-
+-----------------------------------------------------------------------
+-Virtual Memory Module Interface Points:
+-
+-Fault handling: 
+-	int (*handle_mm_fault)(struct mm_struct *mm,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			int write_access);
+-
+-	Called from handle_mm_fault() for vmas managed by the mm_module to 
+-	satisfy fault handling needs. May return an indication of SEGV_ACCERR
+-	or SEGV_MAPERR if fault address is not mapped (e.g. for sparsely
+-	populated vmas).
+-
+-Protection changes:
+-	int (*change_protection)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long end, unsigned long newflags);
+-
+-	Called from mprotect_fixup() to change the protection of all mapped
+-	pages within a vma managed by the mm_module. [needed for e.g. hugetlb
+-	interaction with mprotect()]. Note: the module may (and likely will)
+-	provide it's own, finer grain protection control calls.
+-
+-Page range duplication:
+-	int (*copy_page_range)(struct mm_struct *dst_mm,
+-			struct mm_struct *src_mm, struct vm_area_struct *vma);
+-
+-	Called from copy_page_range() to duplicate a vma managed by an mm_module
+-	from a src_mm to a dst_mm. Used for specialized forking behavior.
+-
+-Page following:
+-	int (*follow_page)(struct mm_struct *mm, struct vm_area_struct *vma,
+-			struct page **pages, struct vm_area_struct **vmas,
+-			unsigned long *position, int *length,
+-			int i, int write);
+-
+-	Called from get_user_pages() to get a vector of pages associated with a
+-	range of addresses within a vma managed by the mm_module. Required
+-	for core dumping, gdb, etc.
+-
+-Probe mapping protection and range:
+-	int (*probe_mapped)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long *end_range, unsigned long *range_vm_flags);
+-
+-	return an indication of whether an address within a vma is mapped or
+-	not, along with it's protection and the range of identical protection
+-	mapping. Used by core dump functionality (e.g. elf_core_dump()) for
+-	efficient traversal and dumping of very large and sparsely populated
+-	vmas (e.g. 16TB vma containing 300MB of mapped data).
+-
+-Unmapping:
+-	unsigned long (*unmap_page_range)(struct mmu_gather **tlbp,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			unsigned long end, struct zap_details *details); 
+-
+-	Called by unmap_vmas() to unmap and release all pages with a vma
+-	managed by the mm_module.
+-
+-	void (*free_pgd_range)(struct mmu_gather *tlb, unsigned long addr,
+-			unsigned long end, unsigned long floor,
+-			unsigned long ceiling);
+-
+-	Called by free_pgtables() to tear down all page table hierarchy
+-	storage associated with a vma managed by the mm_module.
+-
+-vma lifecycle:
+-	int (*init_module_vma)(struct vm_area_struct *vma,
+-			struct vm_area_struct *old_vma);
+-
+-	Called by dup_mmap() to initialize the mm_module state associated with
+-	a newly duplicated vma managed by the mm_module.
+-
+-	void (*exit_module_vma)(struct vm_area_struct *vma);
+-
+-	Called by remove_vma() to tear down the mm_module state associated with
+-	the vma managed by the mm_module.
+-
+-mm lifecycle:
+-	int (*init_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-
+-	Called from mm_init to initialize the mm_module state associated with a
+-	newly duplicated mm.
+-
+-	int (*exit_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-
+-	Called by mmput to tear down the mm_module state associated with an mm
+-
+-struct mm_module_operations_struct {
+-	int (*handle_mm_fault)(struct mm_struct *mm,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			int write_access);
+-	int (*change_protection)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long end, unsigned long newflags);
+-	int (*copy_page_range)(struct mm_struct *dst_mm,
+-			struct mm_struct *src_mm, struct vm_area_struct *vma);
+-	int (*follow_page)(struct mm_struct *mm, struct vm_area_struct *vma,
+-			struct page **pages, struct vm_area_struct **vmas,
+-			unsigned long *position, int *length,
+-			int i, int write);
+-	int (*probe_mapped)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long *end_range, unsigned long *range_vm_flags);
+-	unsigned long (*unmap_page_range)(struct mmu_gather **tlbp,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			unsigned long end, long *zap_work,
+-			struct zap_details *details); 
+-	void (*free_pgd_range)(struct mmu_gather *tlb, unsigned long addr,
+-			unsigned long end, unsigned long floor,
+-			unsigned long ceiling);
+-	int (*init_module_vma)(struct vm_area_struct *vma,
+-			struct vm_area_struct *old_vma);
+-	void (*exit_module_vma)(struct vm_area_struct *vma);
+-	int (*init_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-	int (*exit_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-};
+-
+----------------------------------------------------------------
+-Physical Memory Module Interface Points:
+-
+-Page release interception:
+-	int (*put_page)(struct page *page);
+-
+-	Called by put_page() to allow a pmem_module to receive a released page
+-	under it's management. Returns 1 if page was "taken" (determined to 
+-	belong to the pmem_module), or 0 if not.
+-
+-	int (*release_page)(struct page *page, struct zone **zonep,
+-			unsigned long flags);
+-
+-	Called by release_pages() to allow a pmem_module to receive a released
+-	page under it's management. Returns 1 if page was "taken" (determined to 
+-	belong to the pmem_module), or 0 if not. If page was taken, the spinlock
+-	&(*zonep)->lru_lock must also be released as per similar behavior in
+-	release_pages().
+-
+-Memory hotplug support:
+-	int (*sparse_mem_map_populate)(unsigned long pnum, int nid);
+-
+-	Called by kmalloc_section_memmap() to allow the pmem_module to 
+-	initialize page mapping state associated with newly discovered
+-	physical memory. Must return 0 if not successful.
+-
+-struct pmem_module_operations_struct {
+-	int (*put_page)(struct page *page);
+-	int (*release_page)(struct page *page, struct zone **zonep,
+-			unsigned long flags);
+-	int (*sparse_mem_map_populate)(unsigned long pnum, int nid);
+-};
+-
+diff -Nau8r ./linux-mri/arch/x86/mm/fault.c ./linux-3.10.5/arch/x86/mm/fault.c
+--- ./linux-mri/arch/x86/mm/fault.c	2013-08-18 16:29:45.114706663 -0700
++++ ./linux-3.10.5/arch/x86/mm/fault.c	2013-08-04 01:51:49.000000000 -0700
+@@ -1183,25 +1183,16 @@
+ 	/*
+ 	 * If for any reason at all we couldn't handle the fault,
+ 	 * make sure we exit gracefully rather than endlessly redo
+ 	 * the fault:
+ 	 */
+ 	fault = handle_mm_fault(mm, vma, address, flags);
+ 
+ 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
+-#ifdef CONFIG_MM_MODULES
+-        if (fault & (VM_FAULT_SIGSEGV)) {
+-            if (fault & VM_FAULT_SEGV_ACCERR)
+-                bad_area_access_error(regs, error_code, address);
+-            else
+-                bad_area(regs, error_code, address);
+-            return;
+-        }
+-#endif
+ 		if (mm_fault_error(regs, error_code, address, fault))
+ 			return;
+ 	}
+ 
+ 	/*
+ 	 * Major/minor page fault accounting is only done on the
+ 	 * initial attempt. If we go through a retry, it is extremely
+ 	 * likely that the page will be found in page cache at that point.
+diff -Nau8r ./linux-mri/arch/x86/mm/gup.c ./linux-3.10.5/arch/x86/mm/gup.c
+--- ./linux-mri/arch/x86/mm/gup.c	2013-08-18 15:47:36.162944996 -0700
++++ ./linux-3.10.5/arch/x86/mm/gup.c	2013-08-04 01:51:49.000000000 -0700
+@@ -58,30 +58,16 @@
+ 	smp_rmb();
+ 	if (unlikely(pte.pte_low != ptep->pte_low))
+ 		goto retry;
+ 
+ 	return pte;
+ #endif
+ }
+ 
+-#ifdef CONFIG_MM_MODULES
+-static inline int get_page_not_zero(struct page *page)
+-{
+-	page = compound_head(page);
+-	return atomic_inc_not_zero(&page->_count);
+-}
+-
+-static inline int get_head_page_multiple_not_zero(struct page *page, int nr)
+-{
+-	VM_BUG_ON(page != compound_head(page));
+-	return atomic_add_unless(&page->_count, nr, 0);
+-}
+-#endif /* CONFIG_MM_MODULES */
+-
+ /*
+  * The performance critical leaf functions are made noinline otherwise gcc
+  * inlines everything into a single function which results in too much
+  * register pressure.
+  */
+ static noinline int gup_pte_range(pmd_t pmd, unsigned long addr,
+ 		unsigned long end, int write, struct page **pages, int *nr)
+ {
+@@ -98,23 +84,17 @@
+ 		struct page *page;
+ 
+ 		if ((pte_flags(pte) & (mask | _PAGE_SPECIAL)) != mask) {
+ 			pte_unmap(ptep);
+ 			return 0;
+ 		}
+ 		VM_BUG_ON(!pfn_valid(pte_pfn(pte)));
+ 		page = pte_page(pte);
+-#ifdef CONFIG_MM_MODULES
+- 		/* indicate failure if page ref count was already 0 */
+- 		if (!get_page_not_zero(page))
+- 			return 0;
+-#else /* !CONFIG_MM_MODULES */
+- 		get_page(page);
+-#endif /* CONFIG_MM_MODULES */
++		get_page(page);
+ 		SetPageReferenced(page);
+ 		pages[*nr] = page;
+ 		(*nr)++;
+ 
+ 	} while (ptep++, addr += PAGE_SIZE, addr != end);
+ 	pte_unmap(ptep - 1);
+ 
+ 	return 1;
+@@ -222,28 +202,19 @@
+ 		VM_BUG_ON(compound_head(page) != head);
+ 		pages[*nr] = page;
+ 		if (PageTail(page))
+ 			get_huge_page_tail(page);
+ 		(*nr)++;
+ 		page++;
+ 		refs++;
+ 	} while (addr += PAGE_SIZE, addr != end);
+-#ifdef CONFIG_MM_MODULES
+-	if (!get_head_page_multiple_not_zero(head, refs)) {
+-		/* revert nr pages, indicate failure (ref count was 0) */
+-		(*nr) -= refs;
+-		return 0;
+-	}
+-	return 1;
+-#else /* !CONFIG_MM_MODULES */
+ 	get_head_page_multiple(head, refs);
+ 
+ 	return 1;
+-#endif /* CONFIG_MM_MODULES */
+ }
+ 
+ static int gup_pud_range(pgd_t pgd, unsigned long addr, unsigned long end,
+ 			int write, struct page **pages, int *nr)
+ {
+ 	unsigned long next;
+ 	pud_t *pudp;
+ 
+diff -Nau8r ./linux-mri/drivers/misc/sgi-gru/grufault.c ./linux-3.10.5/drivers/misc/sgi-gru/grufault.c
+--- ./linux-mri/drivers/misc/sgi-gru/grufault.c	2013-08-18 15:48:09.342753358 -0700
++++ ./linux-3.10.5/drivers/misc/sgi-gru/grufault.c	2013-08-04 01:51:49.000000000 -0700
+@@ -188,20 +188,16 @@
+  * 		  1 - (atomic only) try again in non-atomic context
+  */
+ static int non_atomic_pte_lookup(struct vm_area_struct *vma,
+ 				 unsigned long vaddr, int write,
+ 				 unsigned long *paddr, int *pageshift)
+ {
+ 	struct page *page;
+ 
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops)
+-		return -EFAULT;
+-#endif /* CONFIG_MM_MODULES */
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	*pageshift = is_vm_hugetlb_page(vma) ? HPAGE_SHIFT : PAGE_SHIFT;
+ #else
+ 	*pageshift = PAGE_SHIFT;
+ #endif
+ 	if (get_user_pages
+ 	    (current, current->mm, vaddr, 1, write, 0, &page, NULL) <= 0)
+ 		return -EFAULT;
+@@ -251,19 +247,16 @@
+ 		return 1;
+ 
+ 	*paddr = pte_pfn(pte) << PAGE_SHIFT;
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	*pageshift = is_vm_hugetlb_page(vma) ? HPAGE_SHIFT : PAGE_SHIFT;
+ #else
+ 	*pageshift = PAGE_SHIFT;
+ #endif
+-#ifdef CONFIG_MM_MODULES
+-	*pageshift = (pmd_large(*pmdp)) ? HPAGE_SHIFT : PAGE_SHIFT;
+-#endif /* CONFIG_MM_MODULES */
+ 	return 0;
+ 
+ err:
+ 	return 1;
+ }
+ 
+ static int gru_vtop(struct gru_thread_state *gts, unsigned long vaddr,
+ 		    int write, int atomic, unsigned long *gpa, int *pageshift)
+diff -Nau8r ./linux-mri/drivers/misc/sgi-gru/grufault.c.orig ./linux-3.10.5/drivers/misc/sgi-gru/grufault.c.orig
+--- ./linux-mri/drivers/misc/sgi-gru/grufault.c.orig	2013-08-18 13:51:08.293262666 -0700
++++ ./linux-3.10.5/drivers/misc/sgi-gru/grufault.c.orig	1969-12-31 16:00:00.000000000 -0800
+@@ -1,902 +0,0 @@
+-/*
+- * SN Platform GRU Driver
+- *
+- *              FAULT HANDLER FOR GRU DETECTED TLB MISSES
+- *
+- * This file contains code that handles TLB misses within the GRU.
+- * These misses are reported either via interrupts or user polling of
+- * the user CB.
+- *
+- *  Copyright (c) 2008 Silicon Graphics, Inc.  All Rights Reserved.
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation; either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+- */
+-
+-#include <linux/kernel.h>
+-#include <linux/errno.h>
+-#include <linux/spinlock.h>
+-#include <linux/mm.h>
+-#include <linux/hugetlb.h>
+-#include <linux/device.h>
+-#include <linux/io.h>
+-#include <linux/uaccess.h>
+-#include <linux/security.h>
+-#include <linux/prefetch.h>
+-#include <asm/pgtable.h>
+-#include "gru.h"
+-#include "grutables.h"
+-#include "grulib.h"
+-#include "gru_instructions.h"
+-#include <asm/uv/uv_hub.h>
+-
+-/* Return codes for vtop functions */
+-#define VTOP_SUCCESS               0
+-#define VTOP_INVALID               -1
+-#define VTOP_RETRY                 -2
+-
+-
+-/*
+- * Test if a physical address is a valid GRU GSEG address
+- */
+-static inline int is_gru_paddr(unsigned long paddr)
+-{
+-	return paddr >= gru_start_paddr && paddr < gru_end_paddr;
+-}
+-
+-/*
+- * Find the vma of a GRU segment. Caller must hold mmap_sem.
+- */
+-struct vm_area_struct *gru_find_vma(unsigned long vaddr)
+-{
+-	struct vm_area_struct *vma;
+-
+-	vma = find_vma(current->mm, vaddr);
+-	if (vma && vma->vm_start <= vaddr && vma->vm_ops == &gru_vm_ops)
+-		return vma;
+-	return NULL;
+-}
+-
+-/*
+- * Find and lock the gts that contains the specified user vaddr.
+- *
+- * Returns:
+- * 	- *gts with the mmap_sem locked for read and the GTS locked.
+- *	- NULL if vaddr invalid OR is not a valid GSEG vaddr.
+- */
+-
+-static struct gru_thread_state *gru_find_lock_gts(unsigned long vaddr)
+-{
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
+-	struct gru_thread_state *gts = NULL;
+-
+-	down_read(&mm->mmap_sem);
+-	vma = gru_find_vma(vaddr);
+-	if (vma)
+-		gts = gru_find_thread_state(vma, TSID(vaddr, vma));
+-	if (gts)
+-		mutex_lock(&gts->ts_ctxlock);
+-	else
+-		up_read(&mm->mmap_sem);
+-	return gts;
+-}
+-
+-static struct gru_thread_state *gru_alloc_locked_gts(unsigned long vaddr)
+-{
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
+-	struct gru_thread_state *gts = ERR_PTR(-EINVAL);
+-
+-	down_write(&mm->mmap_sem);
+-	vma = gru_find_vma(vaddr);
+-	if (!vma)
+-		goto err;
+-
+-	gts = gru_alloc_thread_state(vma, TSID(vaddr, vma));
+-	if (IS_ERR(gts))
+-		goto err;
+-	mutex_lock(&gts->ts_ctxlock);
+-	downgrade_write(&mm->mmap_sem);
+-	return gts;
+-
+-err:
+-	up_write(&mm->mmap_sem);
+-	return gts;
+-}
+-
+-/*
+- * Unlock a GTS that was previously locked with gru_find_lock_gts().
+- */
+-static void gru_unlock_gts(struct gru_thread_state *gts)
+-{
+-	mutex_unlock(&gts->ts_ctxlock);
+-	up_read(&current->mm->mmap_sem);
+-}
+-
+-/*
+- * Set a CB.istatus to active using a user virtual address. This must be done
+- * just prior to a TFH RESTART. The new cb.istatus is an in-cache status ONLY.
+- * If the line is evicted, the status may be lost. The in-cache update
+- * is necessary to prevent the user from seeing a stale cb.istatus that will
+- * change as soon as the TFH restart is complete. Races may cause an
+- * occasional failure to clear the cb.istatus, but that is ok.
+- */
+-static void gru_cb_set_istatus_active(struct gru_instruction_bits *cbk)
+-{
+-	if (cbk) {
+-		cbk->istatus = CBS_ACTIVE;
+-	}
+-}
+-
+-/*
+- * Read & clear a TFM
+- *
+- * The GRU has an array of fault maps. A map is private to a cpu
+- * Only one cpu will be accessing a cpu's fault map.
+- *
+- * This function scans the cpu-private fault map & clears all bits that
+- * are set. The function returns a bitmap that indicates the bits that
+- * were cleared. Note that sense the maps may be updated asynchronously by
+- * the GRU, atomic operations must be used to clear bits.
+- */
+-static void get_clear_fault_map(struct gru_state *gru,
+-				struct gru_tlb_fault_map *imap,
+-				struct gru_tlb_fault_map *dmap)
+-{
+-	unsigned long i, k;
+-	struct gru_tlb_fault_map *tfm;
+-
+-	tfm = get_tfm_for_cpu(gru, gru_cpu_fault_map_id());
+-	prefetchw(tfm);		/* Helps on hardware, required for emulator */
+-	for (i = 0; i < BITS_TO_LONGS(GRU_NUM_CBE); i++) {
+-		k = tfm->fault_bits[i];
+-		if (k)
+-			k = xchg(&tfm->fault_bits[i], 0UL);
+-		imap->fault_bits[i] = k;
+-		k = tfm->done_bits[i];
+-		if (k)
+-			k = xchg(&tfm->done_bits[i], 0UL);
+-		dmap->fault_bits[i] = k;
+-	}
+-
+-	/*
+-	 * Not functionally required but helps performance. (Required
+-	 * on emulator)
+-	 */
+-	gru_flush_cache(tfm);
+-}
+-
+-/*
+- * Atomic (interrupt context) & non-atomic (user context) functions to
+- * convert a vaddr into a physical address. The size of the page
+- * is returned in pageshift.
+- * 	returns:
+- * 		  0 - successful
+- * 		< 0 - error code
+- * 		  1 - (atomic only) try again in non-atomic context
+- */
+-static int non_atomic_pte_lookup(struct vm_area_struct *vma,
+-				 unsigned long vaddr, int write,
+-				 unsigned long *paddr, int *pageshift)
+-{
+-	struct page *page;
+-
+-#ifdef CONFIG_HUGETLB_PAGE
+-	*pageshift = is_vm_hugetlb_page(vma) ? HPAGE_SHIFT : PAGE_SHIFT;
+-#else
+-	*pageshift = PAGE_SHIFT;
+-#endif
+-	if (get_user_pages
+-	    (current, current->mm, vaddr, 1, write, 0, &page, NULL) <= 0)
+-		return -EFAULT;
+-	*paddr = page_to_phys(page);
+-	put_page(page);
+-	return 0;
+-}
+-
+-/*
+- * atomic_pte_lookup
+- *
+- * Convert a user virtual address to a physical address
+- * Only supports Intel large pages (2MB only) on x86_64.
+- *	ZZZ - hugepage support is incomplete
+- *
+- * NOTE: mmap_sem is already held on entry to this function. This
+- * guarantees existence of the page tables.
+- */
+-static int atomic_pte_lookup(struct vm_area_struct *vma, unsigned long vaddr,
+-	int write, unsigned long *paddr, int *pageshift)
+-{
+-	pgd_t *pgdp;
+-	pmd_t *pmdp;
+-	pud_t *pudp;
+-	pte_t pte;
+-
+-	pgdp = pgd_offset(vma->vm_mm, vaddr);
+-	if (unlikely(pgd_none(*pgdp)))
+-		goto err;
+-
+-	pudp = pud_offset(pgdp, vaddr);
+-	if (unlikely(pud_none(*pudp)))
+-		goto err;
+-
+-	pmdp = pmd_offset(pudp, vaddr);
+-	if (unlikely(pmd_none(*pmdp)))
+-		goto err;
+-#ifdef CONFIG_X86_64
+-	if (unlikely(pmd_large(*pmdp)))
+-		pte = *(pte_t *) pmdp;
+-	else
+-#endif
+-		pte = *pte_offset_kernel(pmdp, vaddr);
+-
+-	if (unlikely(!pte_present(pte) ||
+-		     (write && (!pte_write(pte) || !pte_dirty(pte)))))
+-		return 1;
+-
+-	*paddr = pte_pfn(pte) << PAGE_SHIFT;
+-#ifdef CONFIG_HUGETLB_PAGE
+-	*pageshift = is_vm_hugetlb_page(vma) ? HPAGE_SHIFT : PAGE_SHIFT;
+-#else
+-	*pageshift = PAGE_SHIFT;
+-#endif
+-	return 0;
+-
+-err:
+-	return 1;
+-}
+-
+-static int gru_vtop(struct gru_thread_state *gts, unsigned long vaddr,
+-		    int write, int atomic, unsigned long *gpa, int *pageshift)
+-{
+-	struct mm_struct *mm = gts->ts_mm;
+-	struct vm_area_struct *vma;
+-	unsigned long paddr;
+-	int ret, ps;
+-
+-	vma = find_vma(mm, vaddr);
+-	if (!vma)
+-		goto inval;
+-
+-	/*
+-	 * Atomic lookup is faster & usually works even if called in non-atomic
+-	 * context.
+-	 */
+-	rmb();	/* Must/check ms_range_active before loading PTEs */
+-	ret = atomic_pte_lookup(vma, vaddr, write, &paddr, &ps);
+-	if (ret) {
+-		if (atomic)
+-			goto upm;
+-		if (non_atomic_pte_lookup(vma, vaddr, write, &paddr, &ps))
+-			goto inval;
+-	}
+-	if (is_gru_paddr(paddr))
+-		goto inval;
+-	paddr = paddr & ~((1UL << ps) - 1);
+-	*gpa = uv_soc_phys_ram_to_gpa(paddr);
+-	*pageshift = ps;
+-	return VTOP_SUCCESS;
+-
+-inval:
+-	return VTOP_INVALID;
+-upm:
+-	return VTOP_RETRY;
+-}
+-
+-
+-/*
+- * Flush a CBE from cache. The CBE is clean in the cache. Dirty the
+- * CBE cacheline so that the line will be written back to home agent.
+- * Otherwise the line may be silently dropped. This has no impact
+- * except on performance.
+- */
+-static void gru_flush_cache_cbe(struct gru_control_block_extended *cbe)
+-{
+-	if (unlikely(cbe)) {
+-		cbe->cbrexecstatus = 0;         /* make CL dirty */
+-		gru_flush_cache(cbe);
+-	}
+-}
+-
+-/*
+- * Preload the TLB with entries that may be required. Currently, preloading
+- * is implemented only for BCOPY. Preload  <tlb_preload_count> pages OR to
+- * the end of the bcopy tranfer, whichever is smaller.
+- */
+-static void gru_preload_tlb(struct gru_state *gru,
+-			struct gru_thread_state *gts, int atomic,
+-			unsigned long fault_vaddr, int asid, int write,
+-			unsigned char tlb_preload_count,
+-			struct gru_tlb_fault_handle *tfh,
+-			struct gru_control_block_extended *cbe)
+-{
+-	unsigned long vaddr = 0, gpa;
+-	int ret, pageshift;
+-
+-	if (cbe->opccpy != OP_BCOPY)
+-		return;
+-
+-	if (fault_vaddr == cbe->cbe_baddr0)
+-		vaddr = fault_vaddr + GRU_CACHE_LINE_BYTES * cbe->cbe_src_cl - 1;
+-	else if (fault_vaddr == cbe->cbe_baddr1)
+-		vaddr = fault_vaddr + (1 << cbe->xtypecpy) * cbe->cbe_nelemcur - 1;
+-
+-	fault_vaddr &= PAGE_MASK;
+-	vaddr &= PAGE_MASK;
+-	vaddr = min(vaddr, fault_vaddr + tlb_preload_count * PAGE_SIZE);
+-
+-	while (vaddr > fault_vaddr) {
+-		ret = gru_vtop(gts, vaddr, write, atomic, &gpa, &pageshift);
+-		if (ret || tfh_write_only(tfh, gpa, GAA_RAM, vaddr, asid, write,
+-					  GRU_PAGESIZE(pageshift)))
+-			return;
+-		gru_dbg(grudev,
+-			"%s: gid %d, gts 0x%p, tfh 0x%p, vaddr 0x%lx, asid 0x%x, rw %d, ps %d, gpa 0x%lx\n",
+-			atomic ? "atomic" : "non-atomic", gru->gs_gid, gts, tfh,
+-			vaddr, asid, write, pageshift, gpa);
+-		vaddr -= PAGE_SIZE;
+-		STAT(tlb_preload_page);
+-	}
+-}
+-
+-/*
+- * Drop a TLB entry into the GRU. The fault is described by info in an TFH.
+- *	Input:
+- *		cb    Address of user CBR. Null if not running in user context
+- * 	Return:
+- * 		  0 = dropin, exception, or switch to UPM successful
+- * 		  1 = range invalidate active
+- * 		< 0 = error code
+- *
+- */
+-static int gru_try_dropin(struct gru_state *gru,
+-			  struct gru_thread_state *gts,
+-			  struct gru_tlb_fault_handle *tfh,
+-			  struct gru_instruction_bits *cbk)
+-{
+-	struct gru_control_block_extended *cbe = NULL;
+-	unsigned char tlb_preload_count = gts->ts_tlb_preload_count;
+-	int pageshift = 0, asid, write, ret, atomic = !cbk, indexway;
+-	unsigned long gpa = 0, vaddr = 0;
+-
+-	/*
+-	 * NOTE: The GRU contains magic hardware that eliminates races between
+-	 * TLB invalidates and TLB dropins. If an invalidate occurs
+-	 * in the window between reading the TFH and the subsequent TLB dropin,
+-	 * the dropin is ignored. This eliminates the need for additional locks.
+-	 */
+-
+-	/*
+-	 * Prefetch the CBE if doing TLB preloading
+-	 */
+-	if (unlikely(tlb_preload_count)) {
+-		cbe = gru_tfh_to_cbe(tfh);
+-		prefetchw(cbe);
+-	}
+-
+-	/*
+-	 * Error if TFH state is IDLE or FMM mode & the user issuing a UPM call.
+-	 * Might be a hardware race OR a stupid user. Ignore FMM because FMM
+-	 * is a transient state.
+-	 */
+-	if (tfh->status != TFHSTATUS_EXCEPTION) {
+-		gru_flush_cache(tfh);
+-		sync_core();
+-		if (tfh->status != TFHSTATUS_EXCEPTION)
+-			goto failnoexception;
+-		STAT(tfh_stale_on_fault);
+-	}
+-	if (tfh->state == TFHSTATE_IDLE)
+-		goto failidle;
+-	if (tfh->state == TFHSTATE_MISS_FMM && cbk)
+-		goto failfmm;
+-
+-	write = (tfh->cause & TFHCAUSE_TLB_MOD) != 0;
+-	vaddr = tfh->missvaddr;
+-	asid = tfh->missasid;
+-	indexway = tfh->indexway;
+-	if (asid == 0)
+-		goto failnoasid;
+-
+-	rmb();	/* TFH must be cache resident before reading ms_range_active */
+-
+-	/*
+-	 * TFH is cache resident - at least briefly. Fail the dropin
+-	 * if a range invalidate is active.
+-	 */
+-	if (atomic_read(&gts->ts_gms->ms_range_active))
+-		goto failactive;
+-
+-	ret = gru_vtop(gts, vaddr, write, atomic, &gpa, &pageshift);
+-	if (ret == VTOP_INVALID)
+-		goto failinval;
+-	if (ret == VTOP_RETRY)
+-		goto failupm;
+-
+-	if (!(gts->ts_sizeavail & GRU_SIZEAVAIL(pageshift))) {
+-		gts->ts_sizeavail |= GRU_SIZEAVAIL(pageshift);
+-		if (atomic || !gru_update_cch(gts)) {
+-			gts->ts_force_cch_reload = 1;
+-			goto failupm;
+-		}
+-	}
+-
+-	if (unlikely(cbe) && pageshift == PAGE_SHIFT) {
+-		gru_preload_tlb(gru, gts, atomic, vaddr, asid, write, tlb_preload_count, tfh, cbe);
+-		gru_flush_cache_cbe(cbe);
+-	}
+-
+-	gru_cb_set_istatus_active(cbk);
+-	gts->ustats.tlbdropin++;
+-	tfh_write_restart(tfh, gpa, GAA_RAM, vaddr, asid, write,
+-			  GRU_PAGESIZE(pageshift));
+-	gru_dbg(grudev,
+-		"%s: gid %d, gts 0x%p, tfh 0x%p, vaddr 0x%lx, asid 0x%x, indexway 0x%x,"
+-		" rw %d, ps %d, gpa 0x%lx\n",
+-		atomic ? "atomic" : "non-atomic", gru->gs_gid, gts, tfh, vaddr, asid,
+-		indexway, write, pageshift, gpa);
+-	STAT(tlb_dropin);
+-	return 0;
+-
+-failnoasid:
+-	/* No asid (delayed unload). */
+-	STAT(tlb_dropin_fail_no_asid);
+-	gru_dbg(grudev, "FAILED no_asid tfh: 0x%p, vaddr 0x%lx\n", tfh, vaddr);
+-	if (!cbk)
+-		tfh_user_polling_mode(tfh);
+-	else
+-		gru_flush_cache(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	return -EAGAIN;
+-
+-failupm:
+-	/* Atomic failure switch CBR to UPM */
+-	tfh_user_polling_mode(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	STAT(tlb_dropin_fail_upm);
+-	gru_dbg(grudev, "FAILED upm tfh: 0x%p, vaddr 0x%lx\n", tfh, vaddr);
+-	return 1;
+-
+-failfmm:
+-	/* FMM state on UPM call */
+-	gru_flush_cache(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	STAT(tlb_dropin_fail_fmm);
+-	gru_dbg(grudev, "FAILED fmm tfh: 0x%p, state %d\n", tfh, tfh->state);
+-	return 0;
+-
+-failnoexception:
+-	/* TFH status did not show exception pending */
+-	gru_flush_cache(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	if (cbk)
+-		gru_flush_cache(cbk);
+-	STAT(tlb_dropin_fail_no_exception);
+-	gru_dbg(grudev, "FAILED non-exception tfh: 0x%p, status %d, state %d\n",
+-		tfh, tfh->status, tfh->state);
+-	return 0;
+-
+-failidle:
+-	/* TFH state was idle  - no miss pending */
+-	gru_flush_cache(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	if (cbk)
+-		gru_flush_cache(cbk);
+-	STAT(tlb_dropin_fail_idle);
+-	gru_dbg(grudev, "FAILED idle tfh: 0x%p, state %d\n", tfh, tfh->state);
+-	return 0;
+-
+-failinval:
+-	/* All errors (atomic & non-atomic) switch CBR to EXCEPTION state */
+-	tfh_exception(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	STAT(tlb_dropin_fail_invalid);
+-	gru_dbg(grudev, "FAILED inval tfh: 0x%p, vaddr 0x%lx\n", tfh, vaddr);
+-	return -EFAULT;
+-
+-failactive:
+-	/* Range invalidate active. Switch to UPM iff atomic */
+-	if (!cbk)
+-		tfh_user_polling_mode(tfh);
+-	else
+-		gru_flush_cache(tfh);
+-	gru_flush_cache_cbe(cbe);
+-	STAT(tlb_dropin_fail_range_active);
+-	gru_dbg(grudev, "FAILED range active: tfh 0x%p, vaddr 0x%lx\n",
+-		tfh, vaddr);
+-	return 1;
+-}
+-
+-/*
+- * Process an external interrupt from the GRU. This interrupt is
+- * caused by a TLB miss.
+- * Note that this is the interrupt handler that is registered with linux
+- * interrupt handlers.
+- */
+-static irqreturn_t gru_intr(int chiplet, int blade)
+-{
+-	struct gru_state *gru;
+-	struct gru_tlb_fault_map imap, dmap;
+-	struct gru_thread_state *gts;
+-	struct gru_tlb_fault_handle *tfh = NULL;
+-	struct completion *cmp;
+-	int cbrnum, ctxnum;
+-
+-	STAT(intr);
+-
+-	gru = &gru_base[blade]->bs_grus[chiplet];
+-	if (!gru) {
+-		dev_err(grudev, "GRU: invalid interrupt: cpu %d, chiplet %d\n",
+-			raw_smp_processor_id(), chiplet);
+-		return IRQ_NONE;
+-	}
+-	get_clear_fault_map(gru, &imap, &dmap);
+-	gru_dbg(grudev,
+-		"cpu %d, chiplet %d, gid %d, imap %016lx %016lx, dmap %016lx %016lx\n",
+-		smp_processor_id(), chiplet, gru->gs_gid,
+-		imap.fault_bits[0], imap.fault_bits[1],
+-		dmap.fault_bits[0], dmap.fault_bits[1]);
+-
+-	for_each_cbr_in_tfm(cbrnum, dmap.fault_bits) {
+-		STAT(intr_cbr);
+-		cmp = gru->gs_blade->bs_async_wq;
+-		if (cmp)
+-			complete(cmp);
+-		gru_dbg(grudev, "gid %d, cbr_done %d, done %d\n",
+-			gru->gs_gid, cbrnum, cmp ? cmp->done : -1);
+-	}
+-
+-	for_each_cbr_in_tfm(cbrnum, imap.fault_bits) {
+-		STAT(intr_tfh);
+-		tfh = get_tfh_by_index(gru, cbrnum);
+-		prefetchw(tfh);	/* Helps on hdw, required for emulator */
+-
+-		/*
+-		 * When hardware sets a bit in the faultmap, it implicitly
+-		 * locks the GRU context so that it cannot be unloaded.
+-		 * The gts cannot change until a TFH start/writestart command
+-		 * is issued.
+-		 */
+-		ctxnum = tfh->ctxnum;
+-		gts = gru->gs_gts[ctxnum];
+-
+-		/* Spurious interrupts can cause this. Ignore. */
+-		if (!gts) {
+-			STAT(intr_spurious);
+-			continue;
+-		}
+-
+-		/*
+-		 * This is running in interrupt context. Trylock the mmap_sem.
+-		 * If it fails, retry the fault in user context.
+-		 */
+-		gts->ustats.fmm_tlbmiss++;
+-		if (!gts->ts_force_cch_reload &&
+-					down_read_trylock(&gts->ts_mm->mmap_sem)) {
+-			gru_try_dropin(gru, gts, tfh, NULL);
+-			up_read(&gts->ts_mm->mmap_sem);
+-		} else {
+-			tfh_user_polling_mode(tfh);
+-			STAT(intr_mm_lock_failed);
+-		}
+-	}
+-	return IRQ_HANDLED;
+-}
+-
+-irqreturn_t gru0_intr(int irq, void *dev_id)
+-{
+-	return gru_intr(0, uv_numa_blade_id());
+-}
+-
+-irqreturn_t gru1_intr(int irq, void *dev_id)
+-{
+-	return gru_intr(1, uv_numa_blade_id());
+-}
+-
+-irqreturn_t gru_intr_mblade(int irq, void *dev_id)
+-{
+-	int blade;
+-
+-	for_each_possible_blade(blade) {
+-		if (uv_blade_nr_possible_cpus(blade))
+-			continue;
+-		 gru_intr(0, blade);
+-		 gru_intr(1, blade);
+-	}
+-	return IRQ_HANDLED;
+-}
+-
+-
+-static int gru_user_dropin(struct gru_thread_state *gts,
+-			   struct gru_tlb_fault_handle *tfh,
+-			   void *cb)
+-{
+-	struct gru_mm_struct *gms = gts->ts_gms;
+-	int ret;
+-
+-	gts->ustats.upm_tlbmiss++;
+-	while (1) {
+-		wait_event(gms->ms_wait_queue,
+-			   atomic_read(&gms->ms_range_active) == 0);
+-		prefetchw(tfh);	/* Helps on hdw, required for emulator */
+-		ret = gru_try_dropin(gts->ts_gru, gts, tfh, cb);
+-		if (ret <= 0)
+-			return ret;
+-		STAT(call_os_wait_queue);
+-	}
+-}
+-
+-/*
+- * This interface is called as a result of a user detecting a "call OS" bit
+- * in a user CB. Normally means that a TLB fault has occurred.
+- * 	cb - user virtual address of the CB
+- */
+-int gru_handle_user_call_os(unsigned long cb)
+-{
+-	struct gru_tlb_fault_handle *tfh;
+-	struct gru_thread_state *gts;
+-	void *cbk;
+-	int ucbnum, cbrnum, ret = -EINVAL;
+-
+-	STAT(call_os);
+-
+-	/* sanity check the cb pointer */
+-	ucbnum = get_cb_number((void *)cb);
+-	if ((cb & (GRU_HANDLE_STRIDE - 1)) || ucbnum >= GRU_NUM_CB)
+-		return -EINVAL;
+-
+-	gts = gru_find_lock_gts(cb);
+-	if (!gts)
+-		return -EINVAL;
+-	gru_dbg(grudev, "address 0x%lx, gid %d, gts 0x%p\n", cb, gts->ts_gru ? gts->ts_gru->gs_gid : -1, gts);
+-
+-	if (ucbnum >= gts->ts_cbr_au_count * GRU_CBR_AU_SIZE)
+-		goto exit;
+-
+-	gru_check_context_placement(gts);
+-
+-	/*
+-	 * CCH may contain stale data if ts_force_cch_reload is set.
+-	 */
+-	if (gts->ts_gru && gts->ts_force_cch_reload) {
+-		gts->ts_force_cch_reload = 0;
+-		gru_update_cch(gts);
+-	}
+-
+-	ret = -EAGAIN;
+-	cbrnum = thread_cbr_number(gts, ucbnum);
+-	if (gts->ts_gru) {
+-		tfh = get_tfh_by_index(gts->ts_gru, cbrnum);
+-		cbk = get_gseg_base_address_cb(gts->ts_gru->gs_gru_base_vaddr,
+-				gts->ts_ctxnum, ucbnum);
+-		ret = gru_user_dropin(gts, tfh, cbk);
+-	}
+-exit:
+-	gru_unlock_gts(gts);
+-	return ret;
+-}
+-
+-/*
+- * Fetch the exception detail information for a CB that terminated with
+- * an exception.
+- */
+-int gru_get_exception_detail(unsigned long arg)
+-{
+-	struct control_block_extended_exc_detail excdet;
+-	struct gru_control_block_extended *cbe;
+-	struct gru_thread_state *gts;
+-	int ucbnum, cbrnum, ret;
+-
+-	STAT(user_exception);
+-	if (copy_from_user(&excdet, (void __user *)arg, sizeof(excdet)))
+-		return -EFAULT;
+-
+-	gts = gru_find_lock_gts(excdet.cb);
+-	if (!gts)
+-		return -EINVAL;
+-
+-	gru_dbg(grudev, "address 0x%lx, gid %d, gts 0x%p\n", excdet.cb, gts->ts_gru ? gts->ts_gru->gs_gid : -1, gts);
+-	ucbnum = get_cb_number((void *)excdet.cb);
+-	if (ucbnum >= gts->ts_cbr_au_count * GRU_CBR_AU_SIZE) {
+-		ret = -EINVAL;
+-	} else if (gts->ts_gru) {
+-		cbrnum = thread_cbr_number(gts, ucbnum);
+-		cbe = get_cbe_by_index(gts->ts_gru, cbrnum);
+-		gru_flush_cache(cbe);	/* CBE not coherent */
+-		sync_core();		/* make sure we are have current data */
+-		excdet.opc = cbe->opccpy;
+-		excdet.exopc = cbe->exopccpy;
+-		excdet.ecause = cbe->ecause;
+-		excdet.exceptdet0 = cbe->idef1upd;
+-		excdet.exceptdet1 = cbe->idef3upd;
+-		excdet.cbrstate = cbe->cbrstate;
+-		excdet.cbrexecstatus = cbe->cbrexecstatus;
+-		gru_flush_cache_cbe(cbe);
+-		ret = 0;
+-	} else {
+-		ret = -EAGAIN;
+-	}
+-	gru_unlock_gts(gts);
+-
+-	gru_dbg(grudev,
+-		"cb 0x%lx, op %d, exopc %d, cbrstate %d, cbrexecstatus 0x%x, ecause 0x%x, "
+-		"exdet0 0x%lx, exdet1 0x%x\n",
+-		excdet.cb, excdet.opc, excdet.exopc, excdet.cbrstate, excdet.cbrexecstatus,
+-		excdet.ecause, excdet.exceptdet0, excdet.exceptdet1);
+-	if (!ret && copy_to_user((void __user *)arg, &excdet, sizeof(excdet)))
+-		ret = -EFAULT;
+-	return ret;
+-}
+-
+-/*
+- * User request to unload a context. Content is saved for possible reload.
+- */
+-static int gru_unload_all_contexts(void)
+-{
+-	struct gru_thread_state *gts;
+-	struct gru_state *gru;
+-	int gid, ctxnum;
+-
+-	if (!capable(CAP_SYS_ADMIN))
+-		return -EPERM;
+-	foreach_gid(gid) {
+-		gru = GID_TO_GRU(gid);
+-		spin_lock(&gru->gs_lock);
+-		for (ctxnum = 0; ctxnum < GRU_NUM_CCH; ctxnum++) {
+-			gts = gru->gs_gts[ctxnum];
+-			if (gts && mutex_trylock(&gts->ts_ctxlock)) {
+-				spin_unlock(&gru->gs_lock);
+-				gru_unload_context(gts, 1);
+-				mutex_unlock(&gts->ts_ctxlock);
+-				spin_lock(&gru->gs_lock);
+-			}
+-		}
+-		spin_unlock(&gru->gs_lock);
+-	}
+-	return 0;
+-}
+-
+-int gru_user_unload_context(unsigned long arg)
+-{
+-	struct gru_thread_state *gts;
+-	struct gru_unload_context_req req;
+-
+-	STAT(user_unload_context);
+-	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+-		return -EFAULT;
+-
+-	gru_dbg(grudev, "gseg 0x%lx\n", req.gseg);
+-
+-	if (!req.gseg)
+-		return gru_unload_all_contexts();
+-
+-	gts = gru_find_lock_gts(req.gseg);
+-	if (!gts)
+-		return -EINVAL;
+-
+-	if (gts->ts_gru)
+-		gru_unload_context(gts, 1);
+-	gru_unlock_gts(gts);
+-
+-	return 0;
+-}
+-
+-/*
+- * User request to flush a range of virtual addresses from the GRU TLB
+- * (Mainly for testing).
+- */
+-int gru_user_flush_tlb(unsigned long arg)
+-{
+-	struct gru_thread_state *gts;
+-	struct gru_flush_tlb_req req;
+-	struct gru_mm_struct *gms;
+-
+-	STAT(user_flush_tlb);
+-	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+-		return -EFAULT;
+-
+-	gru_dbg(grudev, "gseg 0x%lx, vaddr 0x%lx, len 0x%lx\n", req.gseg,
+-		req.vaddr, req.len);
+-
+-	gts = gru_find_lock_gts(req.gseg);
+-	if (!gts)
+-		return -EINVAL;
+-
+-	gms = gts->ts_gms;
+-	gru_unlock_gts(gts);
+-	gru_flush_tlb_range(gms, req.vaddr, req.len);
+-
+-	return 0;
+-}
+-
+-/*
+- * Fetch GSEG statisticss
+- */
+-long gru_get_gseg_statistics(unsigned long arg)
+-{
+-	struct gru_thread_state *gts;
+-	struct gru_get_gseg_statistics_req req;
+-
+-	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+-		return -EFAULT;
+-
+-	/*
+-	 * The library creates arrays of contexts for threaded programs.
+-	 * If no gts exists in the array, the context has never been used & all
+-	 * statistics are implicitly 0.
+-	 */
+-	gts = gru_find_lock_gts(req.gseg);
+-	if (gts) {
+-		memcpy(&req.stats, &gts->ustats, sizeof(gts->ustats));
+-		gru_unlock_gts(gts);
+-	} else {
+-		memset(&req.stats, 0, sizeof(gts->ustats));
+-	}
+-
+-	if (copy_to_user((void __user *)arg, &req, sizeof(req)))
+-		return -EFAULT;
+-
+-	return 0;
+-}
+-
+-/*
+- * Register the current task as the user of the GSEG slice.
+- * Needed for TLB fault interrupt targeting.
+- */
+-int gru_set_context_option(unsigned long arg)
+-{
+-	struct gru_thread_state *gts;
+-	struct gru_set_context_option_req req;
+-	int ret = 0;
+-
+-	STAT(set_context_option);
+-	if (copy_from_user(&req, (void __user *)arg, sizeof(req)))
+-		return -EFAULT;
+-	gru_dbg(grudev, "op %d, gseg 0x%lx, value1 0x%lx\n", req.op, req.gseg, req.val1);
+-
+-	gts = gru_find_lock_gts(req.gseg);
+-	if (!gts) {
+-		gts = gru_alloc_locked_gts(req.gseg);
+-		if (IS_ERR(gts))
+-			return PTR_ERR(gts);
+-	}
+-
+-	switch (req.op) {
+-	case sco_blade_chiplet:
+-		/* Select blade/chiplet for GRU context */
+-		if (req.val1 < -1 || req.val1 >= GRU_MAX_BLADES || !gru_base[req.val1] ||
+-		    req.val0 < -1 || req.val0 >= GRU_CHIPLETS_PER_HUB) {
+-			ret = -EINVAL;
+-		} else {
+-			gts->ts_user_blade_id = req.val1;
+-			gts->ts_user_chiplet_id = req.val0;
+-			gru_check_context_placement(gts);
+-		}
+-		break;
+-	case sco_gseg_owner:
+- 		/* Register the current task as the GSEG owner */
+-		gts->ts_tgid_owner = current->tgid;
+-		break;
+-	case sco_cch_req_slice:
+- 		/* Set the CCH slice option */
+-		gts->ts_cch_req_slice = req.val1 & 3;
+-		break;
+-	default:
+-		ret = -EINVAL;
+-	}
+-	gru_unlock_gts(gts);
+-
+-	return ret;
+-}
+diff -Nau8r ./linux-mri/fs/binfmt_elf.c ./linux-3.10.5/fs/binfmt_elf.c
+--- ./linux-mri/fs/binfmt_elf.c	2013-08-18 15:48:22.974675230 -0700
++++ ./linux-3.10.5/fs/binfmt_elf.c	2013-08-04 01:51:49.000000000 -0700
+@@ -2074,44 +2074,16 @@
+ 	 */
+ 	segs = current->mm->map_count;
+ 	segs += elf_core_extra_phdrs();
+ 
+ 	gate_vma = get_gate_vma(current->mm);
+ 	if (gate_vma != NULL)
+ 		segs++;
+ 
+-  #ifdef CONFIG_MM_MODULES
+-  	/* Find out how many extra regions (if any) there are in vmas: */
+-  	for (vma = first_vma(current, gate_vma); vma != NULL;
+-  		vma = next_vma(vma, gate_vma)) {
+-  		if (vma->mm_module_ops) {
+-  			int nr_regions = 0;
+-  			unsigned long range_start = vma->vm_start;
+-  			unsigned long range_end;
+-  			do {
+-  				BUG_ON(!vma->mm_module_ops->probe_mapped);
+-  				if (vma->mm_module_ops->probe_mapped(vma,
+-  							range_start,
+-  							&range_end, NULL) &&
+-  				    vma_dump_size(vma, current->mm->flags) > 0)
+-  					nr_regions++;
+-  			} while (range_start = range_end, range_start <
+-  					vma->vm_end);
+-  			/*
+-  			 * Aadjust segment count according to # of regions in
+-  			 * vma. Note: this should decrement segment count for
+-  			 * vmas with no mapped regions.
+-  			 */
+-  			segs += nr_regions - 1;
+-  		}
+-  	}
+-  #endif /* CONFIG_MM_MODULES */
+-+ 
+-
+ 	/* for notes section */
+ 	segs++;
+ 
+ 	/* If segs > PN_XNUM(0xffff), then e_phnum overflows. To avoid
+ 	 * this, kernel supports extended numbering. Have a look at
+ 	 * include/linux/elf.h for further information. */
+ 	e_phnum = segs > PN_XNUM ? PN_XNUM : segs;
+ 
+@@ -2168,52 +2140,17 @@
+ 	if (size > cprm->limit
+ 	    || !dump_write(cprm->file, phdr4note, sizeof(*phdr4note)))
+ 		goto end_coredump;
+ 
+ 	/* Write program headers for segments dump */
+ 	for (vma = first_vma(current, gate_vma); vma != NULL;
+ 			vma = next_vma(vma, gate_vma)) {
+ 		struct elf_phdr phdr;
+-#if CONFIG_MM_MODULES
+-		unsigned long range_start = vma->vm_start;
+-		unsigned long range_end = vma->vm_end;
+-		unsigned long range_vm_flags = vma->vm_flags;
+-		do {
+-			if (vma->mm_module_ops) {
+-				BUG_ON(!vma->mm_module_ops->probe_mapped);
+-				if (!vma->mm_module_ops->
+-				    probe_mapped(vma, range_start, &range_end,
+-						 &range_vm_flags) ||
+-				    vma_dump_size(vma, cprm->mm_flags) == 0)
+-					continue;
+-			}
+-
+-			phdr.p_type = PT_LOAD;
+-			phdr.p_offset = offset;
+-			phdr.p_vaddr = range_start;
+-			phdr.p_paddr = 0;
+-			phdr.p_filesz = vma->mm_module_ops ?
+-				(range_end - range_start) :
+-				vma_dump_size(vma, cprm->mm_flags);
+-			phdr.p_memsz = range_end - range_start;
+-			offset += phdr.p_filesz;
+-			phdr.p_flags = range_vm_flags & VM_READ ? PF_R : 0;
+-			if (range_vm_flags & VM_WRITE)
+-				phdr.p_flags |= PF_W;
+-			if (range_vm_flags & VM_EXEC)
+-				phdr.p_flags |= PF_X;
+-			phdr.p_align = ELF_EXEC_PAGESIZE;
+-
+-			size += sizeof(phdr);
+-			if (size > cprm->limit
+-		    	|| !dump_write(cprm->file, &phdr, sizeof(phdr)))
+-				goto end_coredump;
+-		} while (range_start = range_end, range_start < vma->vm_end);
+-#else /* CONFIG_MM_MODULES */
++
+ 		phdr.p_type = PT_LOAD;
+ 		phdr.p_offset = offset;
+ 		phdr.p_vaddr = vma->vm_start;
+ 		phdr.p_paddr = 0;
+ 		phdr.p_filesz = vma_dump_size(vma, cprm->mm_flags);
+ 		phdr.p_memsz = vma->vm_end - vma->vm_start;
+ 		offset += phdr.p_filesz;
+ 		phdr.p_flags = vma->vm_flags & VM_READ ? PF_R : 0;
+@@ -2222,17 +2159,16 @@
+ 		if (vma->vm_flags & VM_EXEC)
+ 			phdr.p_flags |= PF_X;
+ 		phdr.p_align = ELF_EXEC_PAGESIZE;
+ 
+ 		size += sizeof(phdr);
+ 		if (size > cprm->limit
+ 		    || !dump_write(cprm->file, &phdr, sizeof(phdr)))
+ 			goto end_coredump;
+-#endif /* CONFIG_MM_MODULES */
+ 	}
+ 
+ 	if (!elf_core_write_extra_phdrs(cprm->file, offset, &size, cprm->limit))
+ 		goto end_coredump;
+ 
+  	/* write out the notes section */
+ 	if (!write_note_info(&info, cprm->file, &foffset))
+ 		goto end_coredump;
+@@ -2244,53 +2180,16 @@
+ 	if (!dump_seek(cprm->file, dataoff - foffset))
+ 		goto end_coredump;
+ 
+ 	for (vma = first_vma(current, gate_vma); vma != NULL;
+ 			vma = next_vma(vma, gate_vma)) {
+ 		unsigned long addr;
+ 		unsigned long end;
+ 
+-#ifdef CONFIG_MM_MODULES
+-		unsigned long range_start = vma->vm_start;
+-		unsigned long range_end;
+-		end = (vma->mm_module_ops ? vma->vm_end :
+-		       vma->vm_start + vma_dump_size(vma, cprm->mm_flags));
+-		range_end = end;
+-
+-		do {
+-			if (vma->mm_module_ops) {
+-				BUG_ON(!vma->mm_module_ops->probe_mapped);
+-				if (!vma->mm_module_ops->
+-				    probe_mapped(vma, range_start, &range_end,
+-						 NULL) || 
+-				    vma_dump_size(vma, cprm->mm_flags) == 0)
+-					continue;
+-			}
+-
+-			for (addr = range_start; addr < range_end;
+-					addr += PAGE_SIZE) {
+-				struct page *page;
+-				int stop;
+-
+-				page = get_dump_page(addr);
+-				if (page) {
+-					void *kaddr = kmap(page);
+-					stop = ((size += PAGE_SIZE) > cprm->limit) ||
+-						!dump_write(cprm->file, kaddr,
+-								PAGE_SIZE);
+-					kunmap(page);
+-					page_cache_release(page);
+-				} else
+-					stop = !dump_seek(cprm->file, PAGE_SIZE);
+-				if (stop)
+-					goto end_coredump;
+-			}
+-		} while (range_start = range_end, range_start < end);
+-#else /* CONFIG_MM_MODULES */
+ 		end = vma->vm_start + vma_dump_size(vma, cprm->mm_flags);
+ 
+ 		for (addr = vma->vm_start; addr < end; addr += PAGE_SIZE) {
+ 			struct page *page;
+ 			int stop;
+ 
+ 			page = get_dump_page(addr);
+ 			if (page) {
+@@ -2300,17 +2199,16 @@
+ 						    PAGE_SIZE);
+ 				kunmap(page);
+ 				page_cache_release(page);
+ 			} else
+ 				stop = !dump_seek(cprm->file, PAGE_SIZE);
+ 			if (stop)
+ 				goto end_coredump;
+ 		}
+-#endif /* CONFIG_MM_MODULES */
+ 	}
+ 
+ 	if (!elf_core_write_extra_data(cprm->file, &size, cprm->limit))
+ 		goto end_coredump;
+ 
+ 	if (e_phnum == PN_XNUM) {
+ 		size += sizeof(*shdr4extnum);
+ 		if (size > cprm->limit
+diff -Nau8r ./linux-mri/fs/binfmt_elf.c.orig ./linux-3.10.5/fs/binfmt_elf.c.orig
+--- ./linux-mri/fs/binfmt_elf.c.orig	2013-08-18 13:52:10.513030872 -0700
++++ ./linux-3.10.5/fs/binfmt_elf.c.orig	1969-12-31 16:00:00.000000000 -0800
+@@ -1,2248 +0,0 @@
+-/*
+- * linux/fs/binfmt_elf.c
+- *
+- * These are the functions used to load ELF format executables as used
+- * on SVr4 machines.  Information on the format may be found in the book
+- * "UNIX SYSTEM V RELEASE 4 Programmers Guide: Ansi C and Programming Support
+- * Tools".
+- *
+- * Copyright 1993, 1994: Eric Youngdale (ericy@cais.com).
+- */
+-
+-#include <linux/module.h>
+-#include <linux/kernel.h>
+-#include <linux/fs.h>
+-#include <linux/mm.h>
+-#include <linux/mman.h>
+-#include <linux/errno.h>
+-#include <linux/signal.h>
+-#include <linux/binfmts.h>
+-#include <linux/string.h>
+-#include <linux/file.h>
+-#include <linux/slab.h>
+-#include <linux/personality.h>
+-#include <linux/elfcore.h>
+-#include <linux/init.h>
+-#include <linux/highuid.h>
+-#include <linux/compiler.h>
+-#include <linux/highmem.h>
+-#include <linux/pagemap.h>
+-#include <linux/vmalloc.h>
+-#include <linux/security.h>
+-#include <linux/random.h>
+-#include <linux/elf.h>
+-#include <linux/utsname.h>
+-#include <linux/coredump.h>
+-#include <linux/sched.h>
+-#include <asm/uaccess.h>
+-#include <asm/param.h>
+-#include <asm/page.h>
+-
+-#ifndef user_long_t
+-#define user_long_t long
+-#endif
+-#ifndef user_siginfo_t
+-#define user_siginfo_t siginfo_t
+-#endif
+-
+-static int load_elf_binary(struct linux_binprm *bprm);
+-static int load_elf_library(struct file *);
+-static unsigned long elf_map(struct file *, unsigned long, struct elf_phdr *,
+-				int, int, unsigned long);
+-
+-/*
+- * If we don't support core dumping, then supply a NULL so we
+- * don't even try.
+- */
+-#ifdef CONFIG_ELF_CORE
+-static int elf_core_dump(struct coredump_params *cprm);
+-#else
+-#define elf_core_dump	NULL
+-#endif
+-
+-#if ELF_EXEC_PAGESIZE > PAGE_SIZE
+-#define ELF_MIN_ALIGN	ELF_EXEC_PAGESIZE
+-#else
+-#define ELF_MIN_ALIGN	PAGE_SIZE
+-#endif
+-
+-#ifndef ELF_CORE_EFLAGS
+-#define ELF_CORE_EFLAGS	0
+-#endif
+-
+-#define ELF_PAGESTART(_v) ((_v) & ~(unsigned long)(ELF_MIN_ALIGN-1))
+-#define ELF_PAGEOFFSET(_v) ((_v) & (ELF_MIN_ALIGN-1))
+-#define ELF_PAGEALIGN(_v) (((_v) + ELF_MIN_ALIGN - 1) & ~(ELF_MIN_ALIGN - 1))
+-
+-static struct linux_binfmt elf_format = {
+-	.module		= THIS_MODULE,
+-	.load_binary	= load_elf_binary,
+-	.load_shlib	= load_elf_library,
+-	.core_dump	= elf_core_dump,
+-	.min_coredump	= ELF_EXEC_PAGESIZE,
+-};
+-
+-#define BAD_ADDR(x) ((unsigned long)(x) >= TASK_SIZE)
+-
+-static int set_brk(unsigned long start, unsigned long end)
+-{
+-	start = ELF_PAGEALIGN(start);
+-	end = ELF_PAGEALIGN(end);
+-	if (end > start) {
+-		unsigned long addr;
+-		addr = vm_brk(start, end - start);
+-		if (BAD_ADDR(addr))
+-			return addr;
+-	}
+-	current->mm->start_brk = current->mm->brk = end;
+-	return 0;
+-}
+-
+-/* We need to explicitly zero any fractional pages
+-   after the data section (i.e. bss).  This would
+-   contain the junk from the file that should not
+-   be in memory
+- */
+-static int padzero(unsigned long elf_bss)
+-{
+-	unsigned long nbyte;
+-
+-	nbyte = ELF_PAGEOFFSET(elf_bss);
+-	if (nbyte) {
+-		nbyte = ELF_MIN_ALIGN - nbyte;
+-		if (clear_user((void __user *) elf_bss, nbyte))
+-			return -EFAULT;
+-	}
+-	return 0;
+-}
+-
+-/* Let's use some macros to make this stack manipulation a little clearer */
+-#ifdef CONFIG_STACK_GROWSUP
+-#define STACK_ADD(sp, items) ((elf_addr_t __user *)(sp) + (items))
+-#define STACK_ROUND(sp, items) \
+-	((15 + (unsigned long) ((sp) + (items))) &~ 15UL)
+-#define STACK_ALLOC(sp, len) ({ \
+-	elf_addr_t __user *old_sp = (elf_addr_t __user *)sp; sp += len; \
+-	old_sp; })
+-#else
+-#define STACK_ADD(sp, items) ((elf_addr_t __user *)(sp) - (items))
+-#define STACK_ROUND(sp, items) \
+-	(((unsigned long) (sp - items)) &~ 15UL)
+-#define STACK_ALLOC(sp, len) ({ sp -= len ; sp; })
+-#endif
+-
+-#ifndef ELF_BASE_PLATFORM
+-/*
+- * AT_BASE_PLATFORM indicates the "real" hardware/microarchitecture.
+- * If the arch defines ELF_BASE_PLATFORM (in asm/elf.h), the value
+- * will be copied to the user stack in the same manner as AT_PLATFORM.
+- */
+-#define ELF_BASE_PLATFORM NULL
+-#endif
+-
+-static int
+-create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+-		unsigned long load_addr, unsigned long interp_load_addr)
+-{
+-	unsigned long p = bprm->p;
+-	int argc = bprm->argc;
+-	int envc = bprm->envc;
+-	elf_addr_t __user *argv;
+-	elf_addr_t __user *envp;
+-	elf_addr_t __user *sp;
+-	elf_addr_t __user *u_platform;
+-	elf_addr_t __user *u_base_platform;
+-	elf_addr_t __user *u_rand_bytes;
+-	const char *k_platform = ELF_PLATFORM;
+-	const char *k_base_platform = ELF_BASE_PLATFORM;
+-	unsigned char k_rand_bytes[16];
+-	int items;
+-	elf_addr_t *elf_info;
+-	int ei_index = 0;
+-	const struct cred *cred = current_cred();
+-	struct vm_area_struct *vma;
+-
+-	/*
+-	 * In some cases (e.g. Hyper-Threading), we want to avoid L1
+-	 * evictions by the processes running on the same package. One
+-	 * thing we can do is to shuffle the initial stack for them.
+-	 */
+-
+-	p = arch_align_stack(p);
+-
+-	/*
+-	 * If this architecture has a platform capability string, copy it
+-	 * to userspace.  In some cases (Sparc), this info is impossible
+-	 * for userspace to get any other way, in others (i386) it is
+-	 * merely difficult.
+-	 */
+-	u_platform = NULL;
+-	if (k_platform) {
+-		size_t len = strlen(k_platform) + 1;
+-
+-		u_platform = (elf_addr_t __user *)STACK_ALLOC(p, len);
+-		if (__copy_to_user(u_platform, k_platform, len))
+-			return -EFAULT;
+-	}
+-
+-	/*
+-	 * If this architecture has a "base" platform capability
+-	 * string, copy it to userspace.
+-	 */
+-	u_base_platform = NULL;
+-	if (k_base_platform) {
+-		size_t len = strlen(k_base_platform) + 1;
+-
+-		u_base_platform = (elf_addr_t __user *)STACK_ALLOC(p, len);
+-		if (__copy_to_user(u_base_platform, k_base_platform, len))
+-			return -EFAULT;
+-	}
+-
+-	/*
+-	 * Generate 16 random bytes for userspace PRNG seeding.
+-	 */
+-	get_random_bytes(k_rand_bytes, sizeof(k_rand_bytes));
+-	u_rand_bytes = (elf_addr_t __user *)
+-		       STACK_ALLOC(p, sizeof(k_rand_bytes));
+-	if (__copy_to_user(u_rand_bytes, k_rand_bytes, sizeof(k_rand_bytes)))
+-		return -EFAULT;
+-
+-	/* Create the ELF interpreter info */
+-	elf_info = (elf_addr_t *)current->mm->saved_auxv;
+-	/* update AT_VECTOR_SIZE_BASE if the number of NEW_AUX_ENT() changes */
+-#define NEW_AUX_ENT(id, val) \
+-	do { \
+-		elf_info[ei_index++] = id; \
+-		elf_info[ei_index++] = val; \
+-	} while (0)
+-
+-#ifdef ARCH_DLINFO
+-	/* 
+-	 * ARCH_DLINFO must come first so PPC can do its special alignment of
+-	 * AUXV.
+-	 * update AT_VECTOR_SIZE_ARCH if the number of NEW_AUX_ENT() in
+-	 * ARCH_DLINFO changes
+-	 */
+-	ARCH_DLINFO;
+-#endif
+-	NEW_AUX_ENT(AT_HWCAP, ELF_HWCAP);
+-	NEW_AUX_ENT(AT_PAGESZ, ELF_EXEC_PAGESIZE);
+-	NEW_AUX_ENT(AT_CLKTCK, CLOCKS_PER_SEC);
+-	NEW_AUX_ENT(AT_PHDR, load_addr + exec->e_phoff);
+-	NEW_AUX_ENT(AT_PHENT, sizeof(struct elf_phdr));
+-	NEW_AUX_ENT(AT_PHNUM, exec->e_phnum);
+-	NEW_AUX_ENT(AT_BASE, interp_load_addr);
+-	NEW_AUX_ENT(AT_FLAGS, 0);
+-	NEW_AUX_ENT(AT_ENTRY, exec->e_entry);
+-	NEW_AUX_ENT(AT_UID, from_kuid_munged(cred->user_ns, cred->uid));
+-	NEW_AUX_ENT(AT_EUID, from_kuid_munged(cred->user_ns, cred->euid));
+-	NEW_AUX_ENT(AT_GID, from_kgid_munged(cred->user_ns, cred->gid));
+-	NEW_AUX_ENT(AT_EGID, from_kgid_munged(cred->user_ns, cred->egid));
+- 	NEW_AUX_ENT(AT_SECURE, security_bprm_secureexec(bprm));
+-	NEW_AUX_ENT(AT_RANDOM, (elf_addr_t)(unsigned long)u_rand_bytes);
+-#ifdef ELF_HWCAP2
+-	NEW_AUX_ENT(AT_HWCAP2, ELF_HWCAP2);
+-#endif
+-	NEW_AUX_ENT(AT_EXECFN, bprm->exec);
+-	if (k_platform) {
+-		NEW_AUX_ENT(AT_PLATFORM,
+-			    (elf_addr_t)(unsigned long)u_platform);
+-	}
+-	if (k_base_platform) {
+-		NEW_AUX_ENT(AT_BASE_PLATFORM,
+-			    (elf_addr_t)(unsigned long)u_base_platform);
+-	}
+-	if (bprm->interp_flags & BINPRM_FLAGS_EXECFD) {
+-		NEW_AUX_ENT(AT_EXECFD, bprm->interp_data);
+-	}
+-#undef NEW_AUX_ENT
+-	/* AT_NULL is zero; clear the rest too */
+-	memset(&elf_info[ei_index], 0,
+-	       sizeof current->mm->saved_auxv - ei_index * sizeof elf_info[0]);
+-
+-	/* And advance past the AT_NULL entry.  */
+-	ei_index += 2;
+-
+-	sp = STACK_ADD(p, ei_index);
+-
+-	items = (argc + 1) + (envc + 1) + 1;
+-	bprm->p = STACK_ROUND(sp, items);
+-
+-	/* Point sp at the lowest address on the stack */
+-#ifdef CONFIG_STACK_GROWSUP
+-	sp = (elf_addr_t __user *)bprm->p - items - ei_index;
+-	bprm->exec = (unsigned long)sp; /* XXX: PARISC HACK */
+-#else
+-	sp = (elf_addr_t __user *)bprm->p;
+-#endif
+-
+-
+-	/*
+-	 * Grow the stack manually; some architectures have a limit on how
+-	 * far ahead a user-space access may be in order to grow the stack.
+-	 */
+-	vma = find_extend_vma(current->mm, bprm->p);
+-	if (!vma)
+-		return -EFAULT;
+-
+-	/* Now, let's put argc (and argv, envp if appropriate) on the stack */
+-	if (__put_user(argc, sp++))
+-		return -EFAULT;
+-	argv = sp;
+-	envp = argv + argc + 1;
+-
+-	/* Populate argv and envp */
+-	p = current->mm->arg_end = current->mm->arg_start;
+-	while (argc-- > 0) {
+-		size_t len;
+-		if (__put_user((elf_addr_t)p, argv++))
+-			return -EFAULT;
+-		len = strnlen_user((void __user *)p, MAX_ARG_STRLEN);
+-		if (!len || len > MAX_ARG_STRLEN)
+-			return -EINVAL;
+-		p += len;
+-	}
+-	if (__put_user(0, argv))
+-		return -EFAULT;
+-	current->mm->arg_end = current->mm->env_start = p;
+-	while (envc-- > 0) {
+-		size_t len;
+-		if (__put_user((elf_addr_t)p, envp++))
+-			return -EFAULT;
+-		len = strnlen_user((void __user *)p, MAX_ARG_STRLEN);
+-		if (!len || len > MAX_ARG_STRLEN)
+-			return -EINVAL;
+-		p += len;
+-	}
+-	if (__put_user(0, envp))
+-		return -EFAULT;
+-	current->mm->env_end = p;
+-
+-	/* Put the elf_info on the stack in the right place.  */
+-	sp = (elf_addr_t __user *)envp + 1;
+-	if (copy_to_user(sp, elf_info, ei_index * sizeof(elf_addr_t)))
+-		return -EFAULT;
+-	return 0;
+-}
+-
+-#ifndef elf_map
+-
+-static unsigned long elf_map(struct file *filep, unsigned long addr,
+-		struct elf_phdr *eppnt, int prot, int type,
+-		unsigned long total_size)
+-{
+-	unsigned long map_addr;
+-	unsigned long size = eppnt->p_filesz + ELF_PAGEOFFSET(eppnt->p_vaddr);
+-	unsigned long off = eppnt->p_offset - ELF_PAGEOFFSET(eppnt->p_vaddr);
+-	addr = ELF_PAGESTART(addr);
+-	size = ELF_PAGEALIGN(size);
+-
+-	/* mmap() will return -EINVAL if given a zero size, but a
+-	 * segment with zero filesize is perfectly valid */
+-	if (!size)
+-		return addr;
+-
+-	/*
+-	* total_size is the size of the ELF (interpreter) image.
+-	* The _first_ mmap needs to know the full size, otherwise
+-	* randomization might put this image into an overlapping
+-	* position with the ELF binary image. (since size < total_size)
+-	* So we first map the 'big' image - and unmap the remainder at
+-	* the end. (which unmap is needed for ELF images with holes.)
+-	*/
+-	if (total_size) {
+-		total_size = ELF_PAGEALIGN(total_size);
+-		map_addr = vm_mmap(filep, addr, total_size, prot, type, off);
+-		if (!BAD_ADDR(map_addr))
+-			vm_munmap(map_addr+size, total_size-size);
+-	} else
+-		map_addr = vm_mmap(filep, addr, size, prot, type, off);
+-
+-	return(map_addr);
+-}
+-
+-#endif /* !elf_map */
+-
+-static unsigned long total_mapping_size(struct elf_phdr *cmds, int nr)
+-{
+-	int i, first_idx = -1, last_idx = -1;
+-
+-	for (i = 0; i < nr; i++) {
+-		if (cmds[i].p_type == PT_LOAD) {
+-			last_idx = i;
+-			if (first_idx == -1)
+-				first_idx = i;
+-		}
+-	}
+-	if (first_idx == -1)
+-		return 0;
+-
+-	return cmds[last_idx].p_vaddr + cmds[last_idx].p_memsz -
+-				ELF_PAGESTART(cmds[first_idx].p_vaddr);
+-}
+-
+-
+-/* This is much more generalized than the library routine read function,
+-   so we keep this separate.  Technically the library read function
+-   is only provided so that we can read a.out libraries that have
+-   an ELF header */
+-
+-static unsigned long load_elf_interp(struct elfhdr *interp_elf_ex,
+-		struct file *interpreter, unsigned long *interp_map_addr,
+-		unsigned long no_base)
+-{
+-	struct elf_phdr *elf_phdata;
+-	struct elf_phdr *eppnt;
+-	unsigned long load_addr = 0;
+-	int load_addr_set = 0;
+-	unsigned long last_bss = 0, elf_bss = 0;
+-	unsigned long error = ~0UL;
+-	unsigned long total_size;
+-	int retval, i, size;
+-
+-	/* First of all, some simple consistency checks */
+-	if (interp_elf_ex->e_type != ET_EXEC &&
+-	    interp_elf_ex->e_type != ET_DYN)
+-		goto out;
+-	if (!elf_check_arch(interp_elf_ex))
+-		goto out;
+-	if (!interpreter->f_op || !interpreter->f_op->mmap)
+-		goto out;
+-
+-	/*
+-	 * If the size of this structure has changed, then punt, since
+-	 * we will be doing the wrong thing.
+-	 */
+-	if (interp_elf_ex->e_phentsize != sizeof(struct elf_phdr))
+-		goto out;
+-	if (interp_elf_ex->e_phnum < 1 ||
+-		interp_elf_ex->e_phnum > 65536U / sizeof(struct elf_phdr))
+-		goto out;
+-
+-	/* Now read in all of the header information */
+-	size = sizeof(struct elf_phdr) * interp_elf_ex->e_phnum;
+-	if (size > ELF_MIN_ALIGN)
+-		goto out;
+-	elf_phdata = kmalloc(size, GFP_KERNEL);
+-	if (!elf_phdata)
+-		goto out;
+-
+-	retval = kernel_read(interpreter, interp_elf_ex->e_phoff,
+-			     (char *)elf_phdata, size);
+-	error = -EIO;
+-	if (retval != size) {
+-		if (retval < 0)
+-			error = retval;	
+-		goto out_close;
+-	}
+-
+-	total_size = total_mapping_size(elf_phdata, interp_elf_ex->e_phnum);
+-	if (!total_size) {
+-		error = -EINVAL;
+-		goto out_close;
+-	}
+-
+-	eppnt = elf_phdata;
+-	for (i = 0; i < interp_elf_ex->e_phnum; i++, eppnt++) {
+-		if (eppnt->p_type == PT_LOAD) {
+-			int elf_type = MAP_PRIVATE | MAP_DENYWRITE;
+-			int elf_prot = 0;
+-			unsigned long vaddr = 0;
+-			unsigned long k, map_addr;
+-
+-			if (eppnt->p_flags & PF_R)
+-		    		elf_prot = PROT_READ;
+-			if (eppnt->p_flags & PF_W)
+-				elf_prot |= PROT_WRITE;
+-			if (eppnt->p_flags & PF_X)
+-				elf_prot |= PROT_EXEC;
+-			vaddr = eppnt->p_vaddr;
+-			if (interp_elf_ex->e_type == ET_EXEC || load_addr_set)
+-				elf_type |= MAP_FIXED;
+-			else if (no_base && interp_elf_ex->e_type == ET_DYN)
+-				load_addr = -vaddr;
+-
+-			map_addr = elf_map(interpreter, load_addr + vaddr,
+-					eppnt, elf_prot, elf_type, total_size);
+-			total_size = 0;
+-			if (!*interp_map_addr)
+-				*interp_map_addr = map_addr;
+-			error = map_addr;
+-			if (BAD_ADDR(map_addr))
+-				goto out_close;
+-
+-			if (!load_addr_set &&
+-			    interp_elf_ex->e_type == ET_DYN) {
+-				load_addr = map_addr - ELF_PAGESTART(vaddr);
+-				load_addr_set = 1;
+-			}
+-
+-			/*
+-			 * Check to see if the section's size will overflow the
+-			 * allowed task size. Note that p_filesz must always be
+-			 * <= p_memsize so it's only necessary to check p_memsz.
+-			 */
+-			k = load_addr + eppnt->p_vaddr;
+-			if (BAD_ADDR(k) ||
+-			    eppnt->p_filesz > eppnt->p_memsz ||
+-			    eppnt->p_memsz > TASK_SIZE ||
+-			    TASK_SIZE - eppnt->p_memsz < k) {
+-				error = -ENOMEM;
+-				goto out_close;
+-			}
+-
+-			/*
+-			 * Find the end of the file mapping for this phdr, and
+-			 * keep track of the largest address we see for this.
+-			 */
+-			k = load_addr + eppnt->p_vaddr + eppnt->p_filesz;
+-			if (k > elf_bss)
+-				elf_bss = k;
+-
+-			/*
+-			 * Do the same thing for the memory mapping - between
+-			 * elf_bss and last_bss is the bss section.
+-			 */
+-			k = load_addr + eppnt->p_memsz + eppnt->p_vaddr;
+-			if (k > last_bss)
+-				last_bss = k;
+-		}
+-	}
+-
+-	if (last_bss > elf_bss) {
+-		/*
+-		 * Now fill out the bss section.  First pad the last page up
+-		 * to the page boundary, and then perform a mmap to make sure
+-		 * that there are zero-mapped pages up to and including the
+-		 * last bss page.
+-		 */
+-		if (padzero(elf_bss)) {
+-			error = -EFAULT;
+-			goto out_close;
+-		}
+-
+-		/* What we have mapped so far */
+-		elf_bss = ELF_PAGESTART(elf_bss + ELF_MIN_ALIGN - 1);
+-
+-		/* Map the last of the bss segment */
+-		error = vm_brk(elf_bss, last_bss - elf_bss);
+-		if (BAD_ADDR(error))
+-			goto out_close;
+-	}
+-
+-	error = load_addr;
+-
+-out_close:
+-	kfree(elf_phdata);
+-out:
+-	return error;
+-}
+-
+-/*
+- * These are the functions used to load ELF style executables and shared
+- * libraries.  There is no binary dependent code anywhere else.
+- */
+-
+-#define INTERPRETER_NONE 0
+-#define INTERPRETER_ELF 2
+-
+-#ifndef STACK_RND_MASK
+-#define STACK_RND_MASK (0x7ff >> (PAGE_SHIFT - 12))	/* 8MB of VA */
+-#endif
+-
+-static unsigned long randomize_stack_top(unsigned long stack_top)
+-{
+-	unsigned int random_variable = 0;
+-
+-	if ((current->flags & PF_RANDOMIZE) &&
+-		!(current->personality & ADDR_NO_RANDOMIZE)) {
+-		random_variable = get_random_int() & STACK_RND_MASK;
+-		random_variable <<= PAGE_SHIFT;
+-	}
+-#ifdef CONFIG_STACK_GROWSUP
+-	return PAGE_ALIGN(stack_top) + random_variable;
+-#else
+-	return PAGE_ALIGN(stack_top) - random_variable;
+-#endif
+-}
+-
+-static int load_elf_binary(struct linux_binprm *bprm)
+-{
+-	struct file *interpreter = NULL; /* to shut gcc up */
+- 	unsigned long load_addr = 0, load_bias = 0;
+-	int load_addr_set = 0;
+-	char * elf_interpreter = NULL;
+-	unsigned long error;
+-	struct elf_phdr *elf_ppnt, *elf_phdata;
+-	unsigned long elf_bss, elf_brk;
+-	int retval, i;
+-	unsigned int size;
+-	unsigned long elf_entry;
+-	unsigned long interp_load_addr = 0;
+-	unsigned long start_code, end_code, start_data, end_data;
+-	unsigned long reloc_func_desc __maybe_unused = 0;
+-	int executable_stack = EXSTACK_DEFAULT;
+-	unsigned long def_flags = 0;
+-	struct pt_regs *regs = current_pt_regs();
+-	struct {
+-		struct elfhdr elf_ex;
+-		struct elfhdr interp_elf_ex;
+-	} *loc;
+-
+-	loc = kmalloc(sizeof(*loc), GFP_KERNEL);
+-	if (!loc) {
+-		retval = -ENOMEM;
+-		goto out_ret;
+-	}
+-	
+-	/* Get the exec-header */
+-	loc->elf_ex = *((struct elfhdr *)bprm->buf);
+-
+-	retval = -ENOEXEC;
+-	/* First of all, some simple consistency checks */
+-	if (memcmp(loc->elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+-		goto out;
+-
+-	if (loc->elf_ex.e_type != ET_EXEC && loc->elf_ex.e_type != ET_DYN)
+-		goto out;
+-	if (!elf_check_arch(&loc->elf_ex))
+-		goto out;
+-	if (!bprm->file->f_op || !bprm->file->f_op->mmap)
+-		goto out;
+-
+-	/* Now read in all of the header information */
+-	if (loc->elf_ex.e_phentsize != sizeof(struct elf_phdr))
+-		goto out;
+-	if (loc->elf_ex.e_phnum < 1 ||
+-	 	loc->elf_ex.e_phnum > 65536U / sizeof(struct elf_phdr))
+-		goto out;
+-	size = loc->elf_ex.e_phnum * sizeof(struct elf_phdr);
+-	retval = -ENOMEM;
+-	elf_phdata = kmalloc(size, GFP_KERNEL);
+-	if (!elf_phdata)
+-		goto out;
+-
+-	retval = kernel_read(bprm->file, loc->elf_ex.e_phoff,
+-			     (char *)elf_phdata, size);
+-	if (retval != size) {
+-		if (retval >= 0)
+-			retval = -EIO;
+-		goto out_free_ph;
+-	}
+-
+-	elf_ppnt = elf_phdata;
+-	elf_bss = 0;
+-	elf_brk = 0;
+-
+-	start_code = ~0UL;
+-	end_code = 0;
+-	start_data = 0;
+-	end_data = 0;
+-
+-	for (i = 0; i < loc->elf_ex.e_phnum; i++) {
+-		if (elf_ppnt->p_type == PT_INTERP) {
+-			/* This is the program interpreter used for
+-			 * shared libraries - for now assume that this
+-			 * is an a.out format binary
+-			 */
+-			retval = -ENOEXEC;
+-			if (elf_ppnt->p_filesz > PATH_MAX || 
+-			    elf_ppnt->p_filesz < 2)
+-				goto out_free_ph;
+-
+-			retval = -ENOMEM;
+-			elf_interpreter = kmalloc(elf_ppnt->p_filesz,
+-						  GFP_KERNEL);
+-			if (!elf_interpreter)
+-				goto out_free_ph;
+-
+-			retval = kernel_read(bprm->file, elf_ppnt->p_offset,
+-					     elf_interpreter,
+-					     elf_ppnt->p_filesz);
+-			if (retval != elf_ppnt->p_filesz) {
+-				if (retval >= 0)
+-					retval = -EIO;
+-				goto out_free_interp;
+-			}
+-			/* make sure path is NULL terminated */
+-			retval = -ENOEXEC;
+-			if (elf_interpreter[elf_ppnt->p_filesz - 1] != '\0')
+-				goto out_free_interp;
+-
+-			interpreter = open_exec(elf_interpreter);
+-			retval = PTR_ERR(interpreter);
+-			if (IS_ERR(interpreter))
+-				goto out_free_interp;
+-
+-			/*
+-			 * If the binary is not readable then enforce
+-			 * mm->dumpable = 0 regardless of the interpreter's
+-			 * permissions.
+-			 */
+-			would_dump(bprm, interpreter);
+-
+-			retval = kernel_read(interpreter, 0, bprm->buf,
+-					     BINPRM_BUF_SIZE);
+-			if (retval != BINPRM_BUF_SIZE) {
+-				if (retval >= 0)
+-					retval = -EIO;
+-				goto out_free_dentry;
+-			}
+-
+-			/* Get the exec headers */
+-			loc->interp_elf_ex = *((struct elfhdr *)bprm->buf);
+-			break;
+-		}
+-		elf_ppnt++;
+-	}
+-
+-	elf_ppnt = elf_phdata;
+-	for (i = 0; i < loc->elf_ex.e_phnum; i++, elf_ppnt++)
+-		if (elf_ppnt->p_type == PT_GNU_STACK) {
+-			if (elf_ppnt->p_flags & PF_X)
+-				executable_stack = EXSTACK_ENABLE_X;
+-			else
+-				executable_stack = EXSTACK_DISABLE_X;
+-			break;
+-		}
+-
+-	/* Some simple consistency checks for the interpreter */
+-	if (elf_interpreter) {
+-		retval = -ELIBBAD;
+-		/* Not an ELF interpreter */
+-		if (memcmp(loc->interp_elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+-			goto out_free_dentry;
+-		/* Verify the interpreter has a valid arch */
+-		if (!elf_check_arch(&loc->interp_elf_ex))
+-			goto out_free_dentry;
+-	}
+-
+-	/* Flush all traces of the currently running executable */
+-	retval = flush_old_exec(bprm);
+-	if (retval)
+-		goto out_free_dentry;
+-
+-	/* OK, This is the point of no return */
+-	current->mm->def_flags = def_flags;
+-
+-	/* Do this immediately, since STACK_TOP as used in setup_arg_pages
+-	   may depend on the personality.  */
+-	SET_PERSONALITY(loc->elf_ex);
+-	if (elf_read_implies_exec(loc->elf_ex, executable_stack))
+-		current->personality |= READ_IMPLIES_EXEC;
+-
+-	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
+-		current->flags |= PF_RANDOMIZE;
+-
+-	setup_new_exec(bprm);
+-
+-	/* Do this so that we can load the interpreter, if need be.  We will
+-	   change some of these later */
+-	current->mm->free_area_cache = current->mm->mmap_base;
+-	current->mm->cached_hole_size = 0;
+-	retval = setup_arg_pages(bprm, randomize_stack_top(STACK_TOP),
+-				 executable_stack);
+-	if (retval < 0) {
+-		send_sig(SIGKILL, current, 0);
+-		goto out_free_dentry;
+-	}
+-	
+-	current->mm->start_stack = bprm->p;
+-
+-	/* Now we do a little grungy work by mmapping the ELF image into
+-	   the correct location in memory. */
+-	for(i = 0, elf_ppnt = elf_phdata;
+-	    i < loc->elf_ex.e_phnum; i++, elf_ppnt++) {
+-		int elf_prot = 0, elf_flags;
+-		unsigned long k, vaddr;
+-
+-		if (elf_ppnt->p_type != PT_LOAD)
+-			continue;
+-
+-		if (unlikely (elf_brk > elf_bss)) {
+-			unsigned long nbyte;
+-	            
+-			/* There was a PT_LOAD segment with p_memsz > p_filesz
+-			   before this one. Map anonymous pages, if needed,
+-			   and clear the area.  */
+-			retval = set_brk(elf_bss + load_bias,
+-					 elf_brk + load_bias);
+-			if (retval) {
+-				send_sig(SIGKILL, current, 0);
+-				goto out_free_dentry;
+-			}
+-			nbyte = ELF_PAGEOFFSET(elf_bss);
+-			if (nbyte) {
+-				nbyte = ELF_MIN_ALIGN - nbyte;
+-				if (nbyte > elf_brk - elf_bss)
+-					nbyte = elf_brk - elf_bss;
+-				if (clear_user((void __user *)elf_bss +
+-							load_bias, nbyte)) {
+-					/*
+-					 * This bss-zeroing can fail if the ELF
+-					 * file specifies odd protections. So
+-					 * we don't check the return value
+-					 */
+-				}
+-			}
+-		}
+-
+-		if (elf_ppnt->p_flags & PF_R)
+-			elf_prot |= PROT_READ;
+-		if (elf_ppnt->p_flags & PF_W)
+-			elf_prot |= PROT_WRITE;
+-		if (elf_ppnt->p_flags & PF_X)
+-			elf_prot |= PROT_EXEC;
+-
+-		elf_flags = MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE;
+-
+-		vaddr = elf_ppnt->p_vaddr;
+-		if (loc->elf_ex.e_type == ET_EXEC || load_addr_set) {
+-			elf_flags |= MAP_FIXED;
+-		} else if (loc->elf_ex.e_type == ET_DYN) {
+-			/* Try and get dynamic programs out of the way of the
+-			 * default mmap base, as well as whatever program they
+-			 * might try to exec.  This is because the brk will
+-			 * follow the loader, and is not movable.  */
+-#ifdef CONFIG_ARCH_BINFMT_ELF_RANDOMIZE_PIE
+-			/* Memory randomization might have been switched off
+-			 * in runtime via sysctl or explicit setting of
+-			 * personality flags.
+-			 * If that is the case, retain the original non-zero
+-			 * load_bias value in order to establish proper
+-			 * non-randomized mappings.
+-			 */
+-			if (current->flags & PF_RANDOMIZE)
+-				load_bias = 0;
+-			else
+-				load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+-#else
+-			load_bias = ELF_PAGESTART(ELF_ET_DYN_BASE - vaddr);
+-#endif
+-		}
+-
+-		error = elf_map(bprm->file, load_bias + vaddr, elf_ppnt,
+-				elf_prot, elf_flags, 0);
+-		if (BAD_ADDR(error)) {
+-			send_sig(SIGKILL, current, 0);
+-			retval = IS_ERR((void *)error) ?
+-				PTR_ERR((void*)error) : -EINVAL;
+-			goto out_free_dentry;
+-		}
+-
+-		if (!load_addr_set) {
+-			load_addr_set = 1;
+-			load_addr = (elf_ppnt->p_vaddr - elf_ppnt->p_offset);
+-			if (loc->elf_ex.e_type == ET_DYN) {
+-				load_bias += error -
+-				             ELF_PAGESTART(load_bias + vaddr);
+-				load_addr += load_bias;
+-				reloc_func_desc = load_bias;
+-			}
+-		}
+-		k = elf_ppnt->p_vaddr;
+-		if (k < start_code)
+-			start_code = k;
+-		if (start_data < k)
+-			start_data = k;
+-
+-		/*
+-		 * Check to see if the section's size will overflow the
+-		 * allowed task size. Note that p_filesz must always be
+-		 * <= p_memsz so it is only necessary to check p_memsz.
+-		 */
+-		if (BAD_ADDR(k) || elf_ppnt->p_filesz > elf_ppnt->p_memsz ||
+-		    elf_ppnt->p_memsz > TASK_SIZE ||
+-		    TASK_SIZE - elf_ppnt->p_memsz < k) {
+-			/* set_brk can never work. Avoid overflows. */
+-			send_sig(SIGKILL, current, 0);
+-			retval = -EINVAL;
+-			goto out_free_dentry;
+-		}
+-
+-		k = elf_ppnt->p_vaddr + elf_ppnt->p_filesz;
+-
+-		if (k > elf_bss)
+-			elf_bss = k;
+-		if ((elf_ppnt->p_flags & PF_X) && end_code < k)
+-			end_code = k;
+-		if (end_data < k)
+-			end_data = k;
+-		k = elf_ppnt->p_vaddr + elf_ppnt->p_memsz;
+-		if (k > elf_brk)
+-			elf_brk = k;
+-	}
+-
+-	loc->elf_ex.e_entry += load_bias;
+-	elf_bss += load_bias;
+-	elf_brk += load_bias;
+-	start_code += load_bias;
+-	end_code += load_bias;
+-	start_data += load_bias;
+-	end_data += load_bias;
+-
+-	/* Calling set_brk effectively mmaps the pages that we need
+-	 * for the bss and break sections.  We must do this before
+-	 * mapping in the interpreter, to make sure it doesn't wind
+-	 * up getting placed where the bss needs to go.
+-	 */
+-	retval = set_brk(elf_bss, elf_brk);
+-	if (retval) {
+-		send_sig(SIGKILL, current, 0);
+-		goto out_free_dentry;
+-	}
+-	if (likely(elf_bss != elf_brk) && unlikely(padzero(elf_bss))) {
+-		send_sig(SIGSEGV, current, 0);
+-		retval = -EFAULT; /* Nobody gets to see this, but.. */
+-		goto out_free_dentry;
+-	}
+-
+-	if (elf_interpreter) {
+-		unsigned long interp_map_addr = 0;
+-
+-		elf_entry = load_elf_interp(&loc->interp_elf_ex,
+-					    interpreter,
+-					    &interp_map_addr,
+-					    load_bias);
+-		if (!IS_ERR((void *)elf_entry)) {
+-			/*
+-			 * load_elf_interp() returns relocation
+-			 * adjustment
+-			 */
+-			interp_load_addr = elf_entry;
+-			elf_entry += loc->interp_elf_ex.e_entry;
+-		}
+-		if (BAD_ADDR(elf_entry)) {
+-			force_sig(SIGSEGV, current);
+-			retval = IS_ERR((void *)elf_entry) ?
+-					(int)elf_entry : -EINVAL;
+-			goto out_free_dentry;
+-		}
+-		reloc_func_desc = interp_load_addr;
+-
+-		allow_write_access(interpreter);
+-		fput(interpreter);
+-		kfree(elf_interpreter);
+-	} else {
+-		elf_entry = loc->elf_ex.e_entry;
+-		if (BAD_ADDR(elf_entry)) {
+-			force_sig(SIGSEGV, current);
+-			retval = -EINVAL;
+-			goto out_free_dentry;
+-		}
+-	}
+-
+-	kfree(elf_phdata);
+-
+-	set_binfmt(&elf_format);
+-
+-#ifdef ARCH_HAS_SETUP_ADDITIONAL_PAGES
+-	retval = arch_setup_additional_pages(bprm, !!elf_interpreter);
+-	if (retval < 0) {
+-		send_sig(SIGKILL, current, 0);
+-		goto out;
+-	}
+-#endif /* ARCH_HAS_SETUP_ADDITIONAL_PAGES */
+-
+-	install_exec_creds(bprm);
+-	retval = create_elf_tables(bprm, &loc->elf_ex,
+-			  load_addr, interp_load_addr);
+-	if (retval < 0) {
+-		send_sig(SIGKILL, current, 0);
+-		goto out;
+-	}
+-	/* N.B. passed_fileno might not be initialized? */
+-	current->mm->end_code = end_code;
+-	current->mm->start_code = start_code;
+-	current->mm->start_data = start_data;
+-	current->mm->end_data = end_data;
+-	current->mm->start_stack = bprm->p;
+-
+-#ifdef arch_randomize_brk
+-	if ((current->flags & PF_RANDOMIZE) && (randomize_va_space > 1)) {
+-		current->mm->brk = current->mm->start_brk =
+-			arch_randomize_brk(current->mm);
+-#ifdef CONFIG_COMPAT_BRK
+-		current->brk_randomized = 1;
+-#endif
+-	}
+-#endif
+-
+-	if (current->personality & MMAP_PAGE_ZERO) {
+-		/* Why this, you ask???  Well SVr4 maps page 0 as read-only,
+-		   and some applications "depend" upon this behavior.
+-		   Since we do not have the power to recompile these, we
+-		   emulate the SVr4 behavior. Sigh. */
+-		error = vm_mmap(NULL, 0, PAGE_SIZE, PROT_READ | PROT_EXEC,
+-				MAP_FIXED | MAP_PRIVATE, 0);
+-	}
+-
+-#ifdef ELF_PLAT_INIT
+-	/*
+-	 * The ABI may specify that certain registers be set up in special
+-	 * ways (on i386 %edx is the address of a DT_FINI function, for
+-	 * example.  In addition, it may also specify (eg, PowerPC64 ELF)
+-	 * that the e_entry field is the address of the function descriptor
+-	 * for the startup routine, rather than the address of the startup
+-	 * routine itself.  This macro performs whatever initialization to
+-	 * the regs structure is required as well as any relocations to the
+-	 * function descriptor entries when executing dynamically links apps.
+-	 */
+-	ELF_PLAT_INIT(regs, reloc_func_desc);
+-#endif
+-
+-	start_thread(regs, elf_entry, bprm->p);
+-	retval = 0;
+-out:
+-	kfree(loc);
+-out_ret:
+-	return retval;
+-
+-	/* error cleanup */
+-out_free_dentry:
+-	allow_write_access(interpreter);
+-	if (interpreter)
+-		fput(interpreter);
+-out_free_interp:
+-	kfree(elf_interpreter);
+-out_free_ph:
+-	kfree(elf_phdata);
+-	goto out;
+-}
+-
+-/* This is really simpleminded and specialized - we are loading an
+-   a.out library that is given an ELF header. */
+-static int load_elf_library(struct file *file)
+-{
+-	struct elf_phdr *elf_phdata;
+-	struct elf_phdr *eppnt;
+-	unsigned long elf_bss, bss, len;
+-	int retval, error, i, j;
+-	struct elfhdr elf_ex;
+-
+-	error = -ENOEXEC;
+-	retval = kernel_read(file, 0, (char *)&elf_ex, sizeof(elf_ex));
+-	if (retval != sizeof(elf_ex))
+-		goto out;
+-
+-	if (memcmp(elf_ex.e_ident, ELFMAG, SELFMAG) != 0)
+-		goto out;
+-
+-	/* First of all, some simple consistency checks */
+-	if (elf_ex.e_type != ET_EXEC || elf_ex.e_phnum > 2 ||
+-	    !elf_check_arch(&elf_ex) || !file->f_op || !file->f_op->mmap)
+-		goto out;
+-
+-	/* Now read in all of the header information */
+-
+-	j = sizeof(struct elf_phdr) * elf_ex.e_phnum;
+-	/* j < ELF_MIN_ALIGN because elf_ex.e_phnum <= 2 */
+-
+-	error = -ENOMEM;
+-	elf_phdata = kmalloc(j, GFP_KERNEL);
+-	if (!elf_phdata)
+-		goto out;
+-
+-	eppnt = elf_phdata;
+-	error = -ENOEXEC;
+-	retval = kernel_read(file, elf_ex.e_phoff, (char *)eppnt, j);
+-	if (retval != j)
+-		goto out_free_ph;
+-
+-	for (j = 0, i = 0; i<elf_ex.e_phnum; i++)
+-		if ((eppnt + i)->p_type == PT_LOAD)
+-			j++;
+-	if (j != 1)
+-		goto out_free_ph;
+-
+-	while (eppnt->p_type != PT_LOAD)
+-		eppnt++;
+-
+-	/* Now use mmap to map the library into memory. */
+-	error = vm_mmap(file,
+-			ELF_PAGESTART(eppnt->p_vaddr),
+-			(eppnt->p_filesz +
+-			 ELF_PAGEOFFSET(eppnt->p_vaddr)),
+-			PROT_READ | PROT_WRITE | PROT_EXEC,
+-			MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
+-			(eppnt->p_offset -
+-			 ELF_PAGEOFFSET(eppnt->p_vaddr)));
+-	if (error != ELF_PAGESTART(eppnt->p_vaddr))
+-		goto out_free_ph;
+-
+-	elf_bss = eppnt->p_vaddr + eppnt->p_filesz;
+-	if (padzero(elf_bss)) {
+-		error = -EFAULT;
+-		goto out_free_ph;
+-	}
+-
+-	len = ELF_PAGESTART(eppnt->p_filesz + eppnt->p_vaddr +
+-			    ELF_MIN_ALIGN - 1);
+-	bss = eppnt->p_memsz + eppnt->p_vaddr;
+-	if (bss > len)
+-		vm_brk(len, bss - len);
+-	error = 0;
+-
+-out_free_ph:
+-	kfree(elf_phdata);
+-out:
+-	return error;
+-}
+-
+-#ifdef CONFIG_ELF_CORE
+-/*
+- * ELF core dumper
+- *
+- * Modelled on fs/exec.c:aout_core_dump()
+- * Jeremy Fitzhardinge <jeremy@sw.oz.au>
+- */
+-
+-/*
+- * The purpose of always_dump_vma() is to make sure that special kernel mappings
+- * that are useful for post-mortem analysis are included in every core dump.
+- * In that way we ensure that the core dump is fully interpretable later
+- * without matching up the same kernel and hardware config to see what PC values
+- * meant. These special mappings include - vDSO, vsyscall, and other
+- * architecture specific mappings
+- */
+-static bool always_dump_vma(struct vm_area_struct *vma)
+-{
+-	/* Any vsyscall mappings? */
+-	if (vma == get_gate_vma(vma->vm_mm))
+-		return true;
+-	/*
+-	 * arch_vma_name() returns non-NULL for special architecture mappings,
+-	 * such as vDSO sections.
+-	 */
+-	if (arch_vma_name(vma))
+-		return true;
+-
+-	return false;
+-}
+-
+-/*
+- * Decide what to dump of a segment, part, all or none.
+- */
+-static unsigned long vma_dump_size(struct vm_area_struct *vma,
+-				   unsigned long mm_flags)
+-{
+-#define FILTER(type)	(mm_flags & (1UL << MMF_DUMP_##type))
+-
+-	/* always dump the vdso and vsyscall sections */
+-	if (always_dump_vma(vma))
+-		goto whole;
+-
+-	if (vma->vm_flags & VM_DONTDUMP)
+-		return 0;
+-
+-	/* Hugetlb memory check */
+-	if (vma->vm_flags & VM_HUGETLB) {
+-		if ((vma->vm_flags & VM_SHARED) && FILTER(HUGETLB_SHARED))
+-			goto whole;
+-		if (!(vma->vm_flags & VM_SHARED) && FILTER(HUGETLB_PRIVATE))
+-			goto whole;
+-		return 0;
+-	}
+-
+-	/* Do not dump I/O mapped devices or special mappings */
+-	if (vma->vm_flags & VM_IO)
+-		return 0;
+-
+-	/* By default, dump shared memory if mapped from an anonymous file. */
+-	if (vma->vm_flags & VM_SHARED) {
+-		if (file_inode(vma->vm_file)->i_nlink == 0 ?
+-		    FILTER(ANON_SHARED) : FILTER(MAPPED_SHARED))
+-			goto whole;
+-		return 0;
+-	}
+-
+-	/* Dump segments that have been written to.  */
+-	if (vma->anon_vma && FILTER(ANON_PRIVATE))
+-		goto whole;
+-	if (vma->vm_file == NULL)
+-		return 0;
+-
+-	if (FILTER(MAPPED_PRIVATE))
+-		goto whole;
+-
+-	/*
+-	 * If this looks like the beginning of a DSO or executable mapping,
+-	 * check for an ELF header.  If we find one, dump the first page to
+-	 * aid in determining what was mapped here.
+-	 */
+-	if (FILTER(ELF_HEADERS) &&
+-	    vma->vm_pgoff == 0 && (vma->vm_flags & VM_READ)) {
+-		u32 __user *header = (u32 __user *) vma->vm_start;
+-		u32 word;
+-		mm_segment_t fs = get_fs();
+-		/*
+-		 * Doing it this way gets the constant folded by GCC.
+-		 */
+-		union {
+-			u32 cmp;
+-			char elfmag[SELFMAG];
+-		} magic;
+-		BUILD_BUG_ON(SELFMAG != sizeof word);
+-		magic.elfmag[EI_MAG0] = ELFMAG0;
+-		magic.elfmag[EI_MAG1] = ELFMAG1;
+-		magic.elfmag[EI_MAG2] = ELFMAG2;
+-		magic.elfmag[EI_MAG3] = ELFMAG3;
+-		/*
+-		 * Switch to the user "segment" for get_user(),
+-		 * then put back what elf_core_dump() had in place.
+-		 */
+-		set_fs(USER_DS);
+-		if (unlikely(get_user(word, header)))
+-			word = 0;
+-		set_fs(fs);
+-		if (word == magic.cmp)
+-			return PAGE_SIZE;
+-	}
+-
+-#undef	FILTER
+-
+-	return 0;
+-
+-whole:
+-	return vma->vm_end - vma->vm_start;
+-}
+-
+-/* An ELF note in memory */
+-struct memelfnote
+-{
+-	const char *name;
+-	int type;
+-	unsigned int datasz;
+-	void *data;
+-};
+-
+-static int notesize(struct memelfnote *en)
+-{
+-	int sz;
+-
+-	sz = sizeof(struct elf_note);
+-	sz += roundup(strlen(en->name) + 1, 4);
+-	sz += roundup(en->datasz, 4);
+-
+-	return sz;
+-}
+-
+-#define DUMP_WRITE(addr, nr, foffset)	\
+-	do { if (!dump_write(file, (addr), (nr))) return 0; *foffset += (nr); } while(0)
+-
+-static int alignfile(struct file *file, loff_t *foffset)
+-{
+-	static const char buf[4] = { 0, };
+-	DUMP_WRITE(buf, roundup(*foffset, 4) - *foffset, foffset);
+-	return 1;
+-}
+-
+-static int writenote(struct memelfnote *men, struct file *file,
+-			loff_t *foffset)
+-{
+-	struct elf_note en;
+-	en.n_namesz = strlen(men->name) + 1;
+-	en.n_descsz = men->datasz;
+-	en.n_type = men->type;
+-
+-	DUMP_WRITE(&en, sizeof(en), foffset);
+-	DUMP_WRITE(men->name, en.n_namesz, foffset);
+-	if (!alignfile(file, foffset))
+-		return 0;
+-	DUMP_WRITE(men->data, men->datasz, foffset);
+-	if (!alignfile(file, foffset))
+-		return 0;
+-
+-	return 1;
+-}
+-#undef DUMP_WRITE
+-
+-static void fill_elf_header(struct elfhdr *elf, int segs,
+-			    u16 machine, u32 flags)
+-{
+-	memset(elf, 0, sizeof(*elf));
+-
+-	memcpy(elf->e_ident, ELFMAG, SELFMAG);
+-	elf->e_ident[EI_CLASS] = ELF_CLASS;
+-	elf->e_ident[EI_DATA] = ELF_DATA;
+-	elf->e_ident[EI_VERSION] = EV_CURRENT;
+-	elf->e_ident[EI_OSABI] = ELF_OSABI;
+-
+-	elf->e_type = ET_CORE;
+-	elf->e_machine = machine;
+-	elf->e_version = EV_CURRENT;
+-	elf->e_phoff = sizeof(struct elfhdr);
+-	elf->e_flags = flags;
+-	elf->e_ehsize = sizeof(struct elfhdr);
+-	elf->e_phentsize = sizeof(struct elf_phdr);
+-	elf->e_phnum = segs;
+-
+-	return;
+-}
+-
+-static void fill_elf_note_phdr(struct elf_phdr *phdr, int sz, loff_t offset)
+-{
+-	phdr->p_type = PT_NOTE;
+-	phdr->p_offset = offset;
+-	phdr->p_vaddr = 0;
+-	phdr->p_paddr = 0;
+-	phdr->p_filesz = sz;
+-	phdr->p_memsz = 0;
+-	phdr->p_flags = 0;
+-	phdr->p_align = 0;
+-	return;
+-}
+-
+-static void fill_note(struct memelfnote *note, const char *name, int type, 
+-		unsigned int sz, void *data)
+-{
+-	note->name = name;
+-	note->type = type;
+-	note->datasz = sz;
+-	note->data = data;
+-	return;
+-}
+-
+-/*
+- * fill up all the fields in prstatus from the given task struct, except
+- * registers which need to be filled up separately.
+- */
+-static void fill_prstatus(struct elf_prstatus *prstatus,
+-		struct task_struct *p, long signr)
+-{
+-	prstatus->pr_info.si_signo = prstatus->pr_cursig = signr;
+-	prstatus->pr_sigpend = p->pending.signal.sig[0];
+-	prstatus->pr_sighold = p->blocked.sig[0];
+-	rcu_read_lock();
+-	prstatus->pr_ppid = task_pid_vnr(rcu_dereference(p->real_parent));
+-	rcu_read_unlock();
+-	prstatus->pr_pid = task_pid_vnr(p);
+-	prstatus->pr_pgrp = task_pgrp_vnr(p);
+-	prstatus->pr_sid = task_session_vnr(p);
+-	if (thread_group_leader(p)) {
+-		struct task_cputime cputime;
+-
+-		/*
+-		 * This is the record for the group leader.  It shows the
+-		 * group-wide total, not its individual thread total.
+-		 */
+-		thread_group_cputime(p, &cputime);
+-		cputime_to_timeval(cputime.utime, &prstatus->pr_utime);
+-		cputime_to_timeval(cputime.stime, &prstatus->pr_stime);
+-	} else {
+-		cputime_t utime, stime;
+-
+-		task_cputime(p, &utime, &stime);
+-		cputime_to_timeval(utime, &prstatus->pr_utime);
+-		cputime_to_timeval(stime, &prstatus->pr_stime);
+-	}
+-	cputime_to_timeval(p->signal->cutime, &prstatus->pr_cutime);
+-	cputime_to_timeval(p->signal->cstime, &prstatus->pr_cstime);
+-}
+-
+-static int fill_psinfo(struct elf_prpsinfo *psinfo, struct task_struct *p,
+-		       struct mm_struct *mm)
+-{
+-	const struct cred *cred;
+-	unsigned int i, len;
+-	
+-	/* first copy the parameters from user space */
+-	memset(psinfo, 0, sizeof(struct elf_prpsinfo));
+-
+-	len = mm->arg_end - mm->arg_start;
+-	if (len >= ELF_PRARGSZ)
+-		len = ELF_PRARGSZ-1;
+-	if (copy_from_user(&psinfo->pr_psargs,
+-		           (const char __user *)mm->arg_start, len))
+-		return -EFAULT;
+-	for(i = 0; i < len; i++)
+-		if (psinfo->pr_psargs[i] == 0)
+-			psinfo->pr_psargs[i] = ' ';
+-	psinfo->pr_psargs[len] = 0;
+-
+-	rcu_read_lock();
+-	psinfo->pr_ppid = task_pid_vnr(rcu_dereference(p->real_parent));
+-	rcu_read_unlock();
+-	psinfo->pr_pid = task_pid_vnr(p);
+-	psinfo->pr_pgrp = task_pgrp_vnr(p);
+-	psinfo->pr_sid = task_session_vnr(p);
+-
+-	i = p->state ? ffz(~p->state) + 1 : 0;
+-	psinfo->pr_state = i;
+-	psinfo->pr_sname = (i > 5) ? '.' : "RSDTZW"[i];
+-	psinfo->pr_zomb = psinfo->pr_sname == 'Z';
+-	psinfo->pr_nice = task_nice(p);
+-	psinfo->pr_flag = p->flags;
+-	rcu_read_lock();
+-	cred = __task_cred(p);
+-	SET_UID(psinfo->pr_uid, from_kuid_munged(cred->user_ns, cred->uid));
+-	SET_GID(psinfo->pr_gid, from_kgid_munged(cred->user_ns, cred->gid));
+-	rcu_read_unlock();
+-	strncpy(psinfo->pr_fname, p->comm, sizeof(psinfo->pr_fname));
+-	
+-	return 0;
+-}
+-
+-static void fill_auxv_note(struct memelfnote *note, struct mm_struct *mm)
+-{
+-	elf_addr_t *auxv = (elf_addr_t *) mm->saved_auxv;
+-	int i = 0;
+-	do
+-		i += 2;
+-	while (auxv[i - 2] != AT_NULL);
+-	fill_note(note, "CORE", NT_AUXV, i * sizeof(elf_addr_t), auxv);
+-}
+-
+-static void fill_siginfo_note(struct memelfnote *note, user_siginfo_t *csigdata,
+-		siginfo_t *siginfo)
+-{
+-	mm_segment_t old_fs = get_fs();
+-	set_fs(KERNEL_DS);
+-	copy_siginfo_to_user((user_siginfo_t __user *) csigdata, siginfo);
+-	set_fs(old_fs);
+-	fill_note(note, "CORE", NT_SIGINFO, sizeof(*csigdata), csigdata);
+-}
+-
+-#define MAX_FILE_NOTE_SIZE (4*1024*1024)
+-/*
+- * Format of NT_FILE note:
+- *
+- * long count     -- how many files are mapped
+- * long page_size -- units for file_ofs
+- * array of [COUNT] elements of
+- *   long start
+- *   long end
+- *   long file_ofs
+- * followed by COUNT filenames in ASCII: "FILE1" NUL "FILE2" NUL...
+- */
+-static void fill_files_note(struct memelfnote *note)
+-{
+-	struct vm_area_struct *vma;
+-	unsigned count, size, names_ofs, remaining, n;
+-	user_long_t *data;
+-	user_long_t *start_end_ofs;
+-	char *name_base, *name_curpos;
+-
+-	/* *Estimated* file count and total data size needed */
+-	count = current->mm->map_count;
+-	size = count * 64;
+-
+-	names_ofs = (2 + 3 * count) * sizeof(data[0]);
+- alloc:
+-	if (size >= MAX_FILE_NOTE_SIZE) /* paranoia check */
+-		goto err;
+-	size = round_up(size, PAGE_SIZE);
+-	data = vmalloc(size);
+-	if (!data)
+-		goto err;
+-
+-	start_end_ofs = data + 2;
+-	name_base = name_curpos = ((char *)data) + names_ofs;
+-	remaining = size - names_ofs;
+-	count = 0;
+-	for (vma = current->mm->mmap; vma != NULL; vma = vma->vm_next) {
+-		struct file *file;
+-		const char *filename;
+-
+-		file = vma->vm_file;
+-		if (!file)
+-			continue;
+-		filename = d_path(&file->f_path, name_curpos, remaining);
+-		if (IS_ERR(filename)) {
+-			if (PTR_ERR(filename) == -ENAMETOOLONG) {
+-				vfree(data);
+-				size = size * 5 / 4;
+-				goto alloc;
+-			}
+-			continue;
+-		}
+-
+-		/* d_path() fills at the end, move name down */
+-		/* n = strlen(filename) + 1: */
+-		n = (name_curpos + remaining) - filename;
+-		remaining = filename - name_curpos;
+-		memmove(name_curpos, filename, n);
+-		name_curpos += n;
+-
+-		*start_end_ofs++ = vma->vm_start;
+-		*start_end_ofs++ = vma->vm_end;
+-		*start_end_ofs++ = vma->vm_pgoff;
+-		count++;
+-	}
+-
+-	/* Now we know exact count of files, can store it */
+-	data[0] = count;
+-	data[1] = PAGE_SIZE;
+-	/*
+-	 * Count usually is less than current->mm->map_count,
+-	 * we need to move filenames down.
+-	 */
+-	n = current->mm->map_count - count;
+-	if (n != 0) {
+-		unsigned shift_bytes = n * 3 * sizeof(data[0]);
+-		memmove(name_base - shift_bytes, name_base,
+-			name_curpos - name_base);
+-		name_curpos -= shift_bytes;
+-	}
+-
+-	size = name_curpos - (char *)data;
+-	fill_note(note, "CORE", NT_FILE, size, data);
+- err: ;
+-}
+-
+-#ifdef CORE_DUMP_USE_REGSET
+-#include <linux/regset.h>
+-
+-struct elf_thread_core_info {
+-	struct elf_thread_core_info *next;
+-	struct task_struct *task;
+-	struct elf_prstatus prstatus;
+-	struct memelfnote notes[0];
+-};
+-
+-struct elf_note_info {
+-	struct elf_thread_core_info *thread;
+-	struct memelfnote psinfo;
+-	struct memelfnote signote;
+-	struct memelfnote auxv;
+-	struct memelfnote files;
+-	user_siginfo_t csigdata;
+-	size_t size;
+-	int thread_notes;
+-};
+-
+-/*
+- * When a regset has a writeback hook, we call it on each thread before
+- * dumping user memory.  On register window machines, this makes sure the
+- * user memory backing the register data is up to date before we read it.
+- */
+-static void do_thread_regset_writeback(struct task_struct *task,
+-				       const struct user_regset *regset)
+-{
+-	if (regset->writeback)
+-		regset->writeback(task, regset, 1);
+-}
+-
+-#ifndef PR_REG_SIZE
+-#define PR_REG_SIZE(S) sizeof(S)
+-#endif
+-
+-#ifndef PRSTATUS_SIZE
+-#define PRSTATUS_SIZE(S) sizeof(S)
+-#endif
+-
+-#ifndef PR_REG_PTR
+-#define PR_REG_PTR(S) (&((S)->pr_reg))
+-#endif
+-
+-#ifndef SET_PR_FPVALID
+-#define SET_PR_FPVALID(S, V) ((S)->pr_fpvalid = (V))
+-#endif
+-
+-static int fill_thread_core_info(struct elf_thread_core_info *t,
+-				 const struct user_regset_view *view,
+-				 long signr, size_t *total)
+-{
+-	unsigned int i;
+-
+-	/*
+-	 * NT_PRSTATUS is the one special case, because the regset data
+-	 * goes into the pr_reg field inside the note contents, rather
+-	 * than being the whole note contents.  We fill the reset in here.
+-	 * We assume that regset 0 is NT_PRSTATUS.
+-	 */
+-	fill_prstatus(&t->prstatus, t->task, signr);
+-	(void) view->regsets[0].get(t->task, &view->regsets[0],
+-				    0, PR_REG_SIZE(t->prstatus.pr_reg),
+-				    PR_REG_PTR(&t->prstatus), NULL);
+-
+-	fill_note(&t->notes[0], "CORE", NT_PRSTATUS,
+-		  PRSTATUS_SIZE(t->prstatus), &t->prstatus);
+-	*total += notesize(&t->notes[0]);
+-
+-	do_thread_regset_writeback(t->task, &view->regsets[0]);
+-
+-	/*
+-	 * Each other regset might generate a note too.  For each regset
+-	 * that has no core_note_type or is inactive, we leave t->notes[i]
+-	 * all zero and we'll know to skip writing it later.
+-	 */
+-	for (i = 1; i < view->n; ++i) {
+-		const struct user_regset *regset = &view->regsets[i];
+-		do_thread_regset_writeback(t->task, regset);
+-		if (regset->core_note_type && regset->get &&
+-		    (!regset->active || regset->active(t->task, regset))) {
+-			int ret;
+-			size_t size = regset->n * regset->size;
+-			void *data = kmalloc(size, GFP_KERNEL);
+-			if (unlikely(!data))
+-				return 0;
+-			ret = regset->get(t->task, regset,
+-					  0, size, data, NULL);
+-			if (unlikely(ret))
+-				kfree(data);
+-			else {
+-				if (regset->core_note_type != NT_PRFPREG)
+-					fill_note(&t->notes[i], "LINUX",
+-						  regset->core_note_type,
+-						  size, data);
+-				else {
+-					SET_PR_FPVALID(&t->prstatus, 1);
+-					fill_note(&t->notes[i], "CORE",
+-						  NT_PRFPREG, size, data);
+-				}
+-				*total += notesize(&t->notes[i]);
+-			}
+-		}
+-	}
+-
+-	return 1;
+-}
+-
+-static int fill_note_info(struct elfhdr *elf, int phdrs,
+-			  struct elf_note_info *info,
+-			  siginfo_t *siginfo, struct pt_regs *regs)
+-{
+-	struct task_struct *dump_task = current;
+-	const struct user_regset_view *view = task_user_regset_view(dump_task);
+-	struct elf_thread_core_info *t;
+-	struct elf_prpsinfo *psinfo;
+-	struct core_thread *ct;
+-	unsigned int i;
+-
+-	info->size = 0;
+-	info->thread = NULL;
+-
+-	psinfo = kmalloc(sizeof(*psinfo), GFP_KERNEL);
+-	if (psinfo == NULL) {
+-		info->psinfo.data = NULL; /* So we don't free this wrongly */
+-		return 0;
+-	}
+-
+-	fill_note(&info->psinfo, "CORE", NT_PRPSINFO, sizeof(*psinfo), psinfo);
+-
+-	/*
+-	 * Figure out how many notes we're going to need for each thread.
+-	 */
+-	info->thread_notes = 0;
+-	for (i = 0; i < view->n; ++i)
+-		if (view->regsets[i].core_note_type != 0)
+-			++info->thread_notes;
+-
+-	/*
+-	 * Sanity check.  We rely on regset 0 being in NT_PRSTATUS,
+-	 * since it is our one special case.
+-	 */
+-	if (unlikely(info->thread_notes == 0) ||
+-	    unlikely(view->regsets[0].core_note_type != NT_PRSTATUS)) {
+-		WARN_ON(1);
+-		return 0;
+-	}
+-
+-	/*
+-	 * Initialize the ELF file header.
+-	 */
+-	fill_elf_header(elf, phdrs,
+-			view->e_machine, view->e_flags);
+-
+-	/*
+-	 * Allocate a structure for each thread.
+-	 */
+-	for (ct = &dump_task->mm->core_state->dumper; ct; ct = ct->next) {
+-		t = kzalloc(offsetof(struct elf_thread_core_info,
+-				     notes[info->thread_notes]),
+-			    GFP_KERNEL);
+-		if (unlikely(!t))
+-			return 0;
+-
+-		t->task = ct->task;
+-		if (ct->task == dump_task || !info->thread) {
+-			t->next = info->thread;
+-			info->thread = t;
+-		} else {
+-			/*
+-			 * Make sure to keep the original task at
+-			 * the head of the list.
+-			 */
+-			t->next = info->thread->next;
+-			info->thread->next = t;
+-		}
+-	}
+-
+-	/*
+-	 * Now fill in each thread's information.
+-	 */
+-	for (t = info->thread; t != NULL; t = t->next)
+-		if (!fill_thread_core_info(t, view, siginfo->si_signo, &info->size))
+-			return 0;
+-
+-	/*
+-	 * Fill in the two process-wide notes.
+-	 */
+-	fill_psinfo(psinfo, dump_task->group_leader, dump_task->mm);
+-	info->size += notesize(&info->psinfo);
+-
+-	fill_siginfo_note(&info->signote, &info->csigdata, siginfo);
+-	info->size += notesize(&info->signote);
+-
+-	fill_auxv_note(&info->auxv, current->mm);
+-	info->size += notesize(&info->auxv);
+-
+-	fill_files_note(&info->files);
+-	info->size += notesize(&info->files);
+-
+-	return 1;
+-}
+-
+-static size_t get_note_info_size(struct elf_note_info *info)
+-{
+-	return info->size;
+-}
+-
+-/*
+- * Write all the notes for each thread.  When writing the first thread, the
+- * process-wide notes are interleaved after the first thread-specific note.
+- */
+-static int write_note_info(struct elf_note_info *info,
+-			   struct file *file, loff_t *foffset)
+-{
+-	bool first = 1;
+-	struct elf_thread_core_info *t = info->thread;
+-
+-	do {
+-		int i;
+-
+-		if (!writenote(&t->notes[0], file, foffset))
+-			return 0;
+-
+-		if (first && !writenote(&info->psinfo, file, foffset))
+-			return 0;
+-		if (first && !writenote(&info->signote, file, foffset))
+-			return 0;
+-		if (first && !writenote(&info->auxv, file, foffset))
+-			return 0;
+-		if (first && !writenote(&info->files, file, foffset))
+-			return 0;
+-
+-		for (i = 1; i < info->thread_notes; ++i)
+-			if (t->notes[i].data &&
+-			    !writenote(&t->notes[i], file, foffset))
+-				return 0;
+-
+-		first = 0;
+-		t = t->next;
+-	} while (t);
+-
+-	return 1;
+-}
+-
+-static void free_note_info(struct elf_note_info *info)
+-{
+-	struct elf_thread_core_info *threads = info->thread;
+-	while (threads) {
+-		unsigned int i;
+-		struct elf_thread_core_info *t = threads;
+-		threads = t->next;
+-		WARN_ON(t->notes[0].data && t->notes[0].data != &t->prstatus);
+-		for (i = 1; i < info->thread_notes; ++i)
+-			kfree(t->notes[i].data);
+-		kfree(t);
+-	}
+-	kfree(info->psinfo.data);
+-	vfree(info->files.data);
+-}
+-
+-#else
+-
+-/* Here is the structure in which status of each thread is captured. */
+-struct elf_thread_status
+-{
+-	struct list_head list;
+-	struct elf_prstatus prstatus;	/* NT_PRSTATUS */
+-	elf_fpregset_t fpu;		/* NT_PRFPREG */
+-	struct task_struct *thread;
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	elf_fpxregset_t xfpu;		/* ELF_CORE_XFPREG_TYPE */
+-#endif
+-	struct memelfnote notes[3];
+-	int num_notes;
+-};
+-
+-/*
+- * In order to add the specific thread information for the elf file format,
+- * we need to keep a linked list of every threads pr_status and then create
+- * a single section for them in the final core file.
+- */
+-static int elf_dump_thread_status(long signr, struct elf_thread_status *t)
+-{
+-	int sz = 0;
+-	struct task_struct *p = t->thread;
+-	t->num_notes = 0;
+-
+-	fill_prstatus(&t->prstatus, p, signr);
+-	elf_core_copy_task_regs(p, &t->prstatus.pr_reg);	
+-	
+-	fill_note(&t->notes[0], "CORE", NT_PRSTATUS, sizeof(t->prstatus),
+-		  &(t->prstatus));
+-	t->num_notes++;
+-	sz += notesize(&t->notes[0]);
+-
+-	if ((t->prstatus.pr_fpvalid = elf_core_copy_task_fpregs(p, NULL,
+-								&t->fpu))) {
+-		fill_note(&t->notes[1], "CORE", NT_PRFPREG, sizeof(t->fpu),
+-			  &(t->fpu));
+-		t->num_notes++;
+-		sz += notesize(&t->notes[1]);
+-	}
+-
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	if (elf_core_copy_task_xfpregs(p, &t->xfpu)) {
+-		fill_note(&t->notes[2], "LINUX", ELF_CORE_XFPREG_TYPE,
+-			  sizeof(t->xfpu), &t->xfpu);
+-		t->num_notes++;
+-		sz += notesize(&t->notes[2]);
+-	}
+-#endif	
+-	return sz;
+-}
+-
+-struct elf_note_info {
+-	struct memelfnote *notes;
+-	struct elf_prstatus *prstatus;	/* NT_PRSTATUS */
+-	struct elf_prpsinfo *psinfo;	/* NT_PRPSINFO */
+-	struct list_head thread_list;
+-	elf_fpregset_t *fpu;
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	elf_fpxregset_t *xfpu;
+-#endif
+-	user_siginfo_t csigdata;
+-	int thread_status_size;
+-	int numnote;
+-};
+-
+-static int elf_note_info_init(struct elf_note_info *info)
+-{
+-	memset(info, 0, sizeof(*info));
+-	INIT_LIST_HEAD(&info->thread_list);
+-
+-	/* Allocate space for ELF notes */
+-	info->notes = kmalloc(8 * sizeof(struct memelfnote), GFP_KERNEL);
+-	if (!info->notes)
+-		return 0;
+-	info->psinfo = kmalloc(sizeof(*info->psinfo), GFP_KERNEL);
+-	if (!info->psinfo)
+-		return 0;
+-	info->prstatus = kmalloc(sizeof(*info->prstatus), GFP_KERNEL);
+-	if (!info->prstatus)
+-		return 0;
+-	info->fpu = kmalloc(sizeof(*info->fpu), GFP_KERNEL);
+-	if (!info->fpu)
+-		return 0;
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	info->xfpu = kmalloc(sizeof(*info->xfpu), GFP_KERNEL);
+-	if (!info->xfpu)
+-		return 0;
+-#endif
+-	return 1;
+-}
+-
+-static int fill_note_info(struct elfhdr *elf, int phdrs,
+-			  struct elf_note_info *info,
+-			  siginfo_t *siginfo, struct pt_regs *regs)
+-{
+-	struct list_head *t;
+-
+-	if (!elf_note_info_init(info))
+-		return 0;
+-
+-	if (siginfo->si_signo) {
+-		struct core_thread *ct;
+-		struct elf_thread_status *ets;
+-
+-		for (ct = current->mm->core_state->dumper.next;
+-						ct; ct = ct->next) {
+-			ets = kzalloc(sizeof(*ets), GFP_KERNEL);
+-			if (!ets)
+-				return 0;
+-
+-			ets->thread = ct->task;
+-			list_add(&ets->list, &info->thread_list);
+-		}
+-
+-		list_for_each(t, &info->thread_list) {
+-			int sz;
+-
+-			ets = list_entry(t, struct elf_thread_status, list);
+-			sz = elf_dump_thread_status(siginfo->si_signo, ets);
+-			info->thread_status_size += sz;
+-		}
+-	}
+-	/* now collect the dump for the current */
+-	memset(info->prstatus, 0, sizeof(*info->prstatus));
+-	fill_prstatus(info->prstatus, current, siginfo->si_signo);
+-	elf_core_copy_regs(&info->prstatus->pr_reg, regs);
+-
+-	/* Set up header */
+-	fill_elf_header(elf, phdrs, ELF_ARCH, ELF_CORE_EFLAGS);
+-
+-	/*
+-	 * Set up the notes in similar form to SVR4 core dumps made
+-	 * with info from their /proc.
+-	 */
+-
+-	fill_note(info->notes + 0, "CORE", NT_PRSTATUS,
+-		  sizeof(*info->prstatus), info->prstatus);
+-	fill_psinfo(info->psinfo, current->group_leader, current->mm);
+-	fill_note(info->notes + 1, "CORE", NT_PRPSINFO,
+-		  sizeof(*info->psinfo), info->psinfo);
+-
+-	fill_siginfo_note(info->notes + 2, &info->csigdata, siginfo);
+-	fill_auxv_note(info->notes + 3, current->mm);
+-	fill_files_note(info->notes + 4);
+-
+-	info->numnote = 5;
+-
+-	/* Try to dump the FPU. */
+-	info->prstatus->pr_fpvalid = elf_core_copy_task_fpregs(current, regs,
+-							       info->fpu);
+-	if (info->prstatus->pr_fpvalid)
+-		fill_note(info->notes + info->numnote++,
+-			  "CORE", NT_PRFPREG, sizeof(*info->fpu), info->fpu);
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	if (elf_core_copy_task_xfpregs(current, info->xfpu))
+-		fill_note(info->notes + info->numnote++,
+-			  "LINUX", ELF_CORE_XFPREG_TYPE,
+-			  sizeof(*info->xfpu), info->xfpu);
+-#endif
+-
+-	return 1;
+-}
+-
+-static size_t get_note_info_size(struct elf_note_info *info)
+-{
+-	int sz = 0;
+-	int i;
+-
+-	for (i = 0; i < info->numnote; i++)
+-		sz += notesize(info->notes + i);
+-
+-	sz += info->thread_status_size;
+-
+-	return sz;
+-}
+-
+-static int write_note_info(struct elf_note_info *info,
+-			   struct file *file, loff_t *foffset)
+-{
+-	int i;
+-	struct list_head *t;
+-
+-	for (i = 0; i < info->numnote; i++)
+-		if (!writenote(info->notes + i, file, foffset))
+-			return 0;
+-
+-	/* write out the thread status notes section */
+-	list_for_each(t, &info->thread_list) {
+-		struct elf_thread_status *tmp =
+-				list_entry(t, struct elf_thread_status, list);
+-
+-		for (i = 0; i < tmp->num_notes; i++)
+-			if (!writenote(&tmp->notes[i], file, foffset))
+-				return 0;
+-	}
+-
+-	return 1;
+-}
+-
+-static void free_note_info(struct elf_note_info *info)
+-{
+-	while (!list_empty(&info->thread_list)) {
+-		struct list_head *tmp = info->thread_list.next;
+-		list_del(tmp);
+-		kfree(list_entry(tmp, struct elf_thread_status, list));
+-	}
+-
+-	/* Free data allocated by fill_files_note(): */
+-	vfree(info->notes[4].data);
+-
+-	kfree(info->prstatus);
+-	kfree(info->psinfo);
+-	kfree(info->notes);
+-	kfree(info->fpu);
+-#ifdef ELF_CORE_COPY_XFPREGS
+-	kfree(info->xfpu);
+-#endif
+-}
+-
+-#endif
+-
+-static struct vm_area_struct *first_vma(struct task_struct *tsk,
+-					struct vm_area_struct *gate_vma)
+-{
+-	struct vm_area_struct *ret = tsk->mm->mmap;
+-
+-	if (ret)
+-		return ret;
+-	return gate_vma;
+-}
+-/*
+- * Helper function for iterating across a vma list.  It ensures that the caller
+- * will visit `gate_vma' prior to terminating the search.
+- */
+-static struct vm_area_struct *next_vma(struct vm_area_struct *this_vma,
+-					struct vm_area_struct *gate_vma)
+-{
+-	struct vm_area_struct *ret;
+-
+-	ret = this_vma->vm_next;
+-	if (ret)
+-		return ret;
+-	if (this_vma == gate_vma)
+-		return NULL;
+-	return gate_vma;
+-}
+-
+-static void fill_extnum_info(struct elfhdr *elf, struct elf_shdr *shdr4extnum,
+-			     elf_addr_t e_shoff, int segs)
+-{
+-	elf->e_shoff = e_shoff;
+-	elf->e_shentsize = sizeof(*shdr4extnum);
+-	elf->e_shnum = 1;
+-	elf->e_shstrndx = SHN_UNDEF;
+-
+-	memset(shdr4extnum, 0, sizeof(*shdr4extnum));
+-
+-	shdr4extnum->sh_type = SHT_NULL;
+-	shdr4extnum->sh_size = elf->e_shnum;
+-	shdr4extnum->sh_link = elf->e_shstrndx;
+-	shdr4extnum->sh_info = segs;
+-}
+-
+-static size_t elf_core_vma_data_size(struct vm_area_struct *gate_vma,
+-				     unsigned long mm_flags)
+-{
+-	struct vm_area_struct *vma;
+-	size_t size = 0;
+-
+-	for (vma = first_vma(current, gate_vma); vma != NULL;
+-	     vma = next_vma(vma, gate_vma))
+-		size += vma_dump_size(vma, mm_flags);
+-	return size;
+-}
+-
+-/*
+- * Actual dumper
+- *
+- * This is a two-pass process; first we find the offsets of the bits,
+- * and then they are actually written out.  If we run out of core limit
+- * we just truncate.
+- */
+-static int elf_core_dump(struct coredump_params *cprm)
+-{
+-	int has_dumped = 0;
+-	mm_segment_t fs;
+-	int segs;
+-	size_t size = 0;
+-	struct vm_area_struct *vma, *gate_vma;
+-	struct elfhdr *elf = NULL;
+-	loff_t offset = 0, dataoff, foffset;
+-	struct elf_note_info info;
+-	struct elf_phdr *phdr4note = NULL;
+-	struct elf_shdr *shdr4extnum = NULL;
+-	Elf_Half e_phnum;
+-	elf_addr_t e_shoff;
+-
+-	/*
+-	 * We no longer stop all VM operations.
+-	 * 
+-	 * This is because those proceses that could possibly change map_count
+-	 * or the mmap / vma pages are now blocked in do_exit on current
+-	 * finishing this core dump.
+-	 *
+-	 * Only ptrace can touch these memory addresses, but it doesn't change
+-	 * the map_count or the pages allocated. So no possibility of crashing
+-	 * exists while dumping the mm->vm_next areas to the core file.
+-	 */
+-  
+-	/* alloc memory for large data structures: too large to be on stack */
+-	elf = kmalloc(sizeof(*elf), GFP_KERNEL);
+-	if (!elf)
+-		goto out;
+-	/*
+-	 * The number of segs are recored into ELF header as 16bit value.
+-	 * Please check DEFAULT_MAX_MAP_COUNT definition when you modify here.
+-	 */
+-	segs = current->mm->map_count;
+-	segs += elf_core_extra_phdrs();
+-
+-	gate_vma = get_gate_vma(current->mm);
+-	if (gate_vma != NULL)
+-		segs++;
+-
+-	/* for notes section */
+-	segs++;
+-
+-	/* If segs > PN_XNUM(0xffff), then e_phnum overflows. To avoid
+-	 * this, kernel supports extended numbering. Have a look at
+-	 * include/linux/elf.h for further information. */
+-	e_phnum = segs > PN_XNUM ? PN_XNUM : segs;
+-
+-	/*
+-	 * Collect all the non-memory information about the process for the
+-	 * notes.  This also sets up the file header.
+-	 */
+-	if (!fill_note_info(elf, e_phnum, &info, cprm->siginfo, cprm->regs))
+-		goto cleanup;
+-
+-	has_dumped = 1;
+-
+-	fs = get_fs();
+-	set_fs(KERNEL_DS);
+-
+-	offset += sizeof(*elf);				/* Elf header */
+-	offset += segs * sizeof(struct elf_phdr);	/* Program headers */
+-	foffset = offset;
+-
+-	/* Write notes phdr entry */
+-	{
+-		size_t sz = get_note_info_size(&info);
+-
+-		sz += elf_coredump_extra_notes_size();
+-
+-		phdr4note = kmalloc(sizeof(*phdr4note), GFP_KERNEL);
+-		if (!phdr4note)
+-			goto end_coredump;
+-
+-		fill_elf_note_phdr(phdr4note, sz, offset);
+-		offset += sz;
+-	}
+-
+-	dataoff = offset = roundup(offset, ELF_EXEC_PAGESIZE);
+-
+-	offset += elf_core_vma_data_size(gate_vma, cprm->mm_flags);
+-	offset += elf_core_extra_data_size();
+-	e_shoff = offset;
+-
+-	if (e_phnum == PN_XNUM) {
+-		shdr4extnum = kmalloc(sizeof(*shdr4extnum), GFP_KERNEL);
+-		if (!shdr4extnum)
+-			goto end_coredump;
+-		fill_extnum_info(elf, shdr4extnum, e_shoff, segs);
+-	}
+-
+-	offset = dataoff;
+-
+-	size += sizeof(*elf);
+-	if (size > cprm->limit || !dump_write(cprm->file, elf, sizeof(*elf)))
+-		goto end_coredump;
+-
+-	size += sizeof(*phdr4note);
+-	if (size > cprm->limit
+-	    || !dump_write(cprm->file, phdr4note, sizeof(*phdr4note)))
+-		goto end_coredump;
+-
+-	/* Write program headers for segments dump */
+-	for (vma = first_vma(current, gate_vma); vma != NULL;
+-			vma = next_vma(vma, gate_vma)) {
+-		struct elf_phdr phdr;
+-
+-		phdr.p_type = PT_LOAD;
+-		phdr.p_offset = offset;
+-		phdr.p_vaddr = vma->vm_start;
+-		phdr.p_paddr = 0;
+-		phdr.p_filesz = vma_dump_size(vma, cprm->mm_flags);
+-		phdr.p_memsz = vma->vm_end - vma->vm_start;
+-		offset += phdr.p_filesz;
+-		phdr.p_flags = vma->vm_flags & VM_READ ? PF_R : 0;
+-		if (vma->vm_flags & VM_WRITE)
+-			phdr.p_flags |= PF_W;
+-		if (vma->vm_flags & VM_EXEC)
+-			phdr.p_flags |= PF_X;
+-		phdr.p_align = ELF_EXEC_PAGESIZE;
+-
+-		size += sizeof(phdr);
+-		if (size > cprm->limit
+-		    || !dump_write(cprm->file, &phdr, sizeof(phdr)))
+-			goto end_coredump;
+-	}
+-
+-	if (!elf_core_write_extra_phdrs(cprm->file, offset, &size, cprm->limit))
+-		goto end_coredump;
+-
+- 	/* write out the notes section */
+-	if (!write_note_info(&info, cprm->file, &foffset))
+-		goto end_coredump;
+-
+-	if (elf_coredump_extra_notes_write(cprm->file, &foffset))
+-		goto end_coredump;
+-
+-	/* Align to page */
+-	if (!dump_seek(cprm->file, dataoff - foffset))
+-		goto end_coredump;
+-
+-	for (vma = first_vma(current, gate_vma); vma != NULL;
+-			vma = next_vma(vma, gate_vma)) {
+-		unsigned long addr;
+-		unsigned long end;
+-
+-		end = vma->vm_start + vma_dump_size(vma, cprm->mm_flags);
+-
+-		for (addr = vma->vm_start; addr < end; addr += PAGE_SIZE) {
+-			struct page *page;
+-			int stop;
+-
+-			page = get_dump_page(addr);
+-			if (page) {
+-				void *kaddr = kmap(page);
+-				stop = ((size += PAGE_SIZE) > cprm->limit) ||
+-					!dump_write(cprm->file, kaddr,
+-						    PAGE_SIZE);
+-				kunmap(page);
+-				page_cache_release(page);
+-			} else
+-				stop = !dump_seek(cprm->file, PAGE_SIZE);
+-			if (stop)
+-				goto end_coredump;
+-		}
+-	}
+-
+-	if (!elf_core_write_extra_data(cprm->file, &size, cprm->limit))
+-		goto end_coredump;
+-
+-	if (e_phnum == PN_XNUM) {
+-		size += sizeof(*shdr4extnum);
+-		if (size > cprm->limit
+-		    || !dump_write(cprm->file, shdr4extnum,
+-				   sizeof(*shdr4extnum)))
+-			goto end_coredump;
+-	}
+-
+-end_coredump:
+-	set_fs(fs);
+-
+-cleanup:
+-	free_note_info(&info);
+-	kfree(shdr4extnum);
+-	kfree(phdr4note);
+-	kfree(elf);
+-out:
+-	return has_dumped;
+-}
+-
+-#endif		/* CONFIG_ELF_CORE */
+-
+-static int __init init_elf_binfmt(void)
+-{
+-	register_binfmt(&elf_format);
+-	return 0;
+-}
+-
+-static void __exit exit_elf_binfmt(void)
+-{
+-	/* Remove the COFF and ELF loaders. */
+-	unregister_binfmt(&elf_format);
+-}
+-
+-core_initcall(init_elf_binfmt);
+-module_exit(exit_elf_binfmt);
+-MODULE_LICENSE("GPL");
+diff -Nau8r ./linux-mri/fs/proc/task_mmu.c ./linux-3.10.5/fs/proc/task_mmu.c
+--- ./linux-mri/fs/proc/task_mmu.c	2013-08-18 16:14:00.571001057 -0700
++++ ./linux-3.10.5/fs/proc/task_mmu.c	2013-08-04 01:51:49.000000000 -0700
+@@ -280,38 +280,25 @@
+ 	/* We don't show the stack guard page in /proc/maps */
+ 	start = vma->vm_start;
+ 	if (stack_guard_page_start(vma, start))
+ 		start += PAGE_SIZE;
+ 	end = vma->vm_end;
+ 	if (stack_guard_page_end(vma, end))
+ 		end -= PAGE_SIZE;
+ 
+-#ifdef CONFIG_MM_MODULES
+-	seq_printf(m, "%08lx-%08lx %c%c%c%c%c %08llx %02x:%02x %lu %n",
+-			vma->vm_start,
+-			vma->vm_end,
++	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu %n",
++			start,
++			end,
+ 			flags & VM_READ ? 'r' : '-',
+ 			flags & VM_WRITE ? 'w' : '-',
+ 			flags & VM_EXEC ? 'x' : '-',
+ 			flags & VM_MAYSHARE ? 's' : 'p',
+-			vma->mm_module_ops ? 'm' : '\0',
+-			((loff_t)vma->vm_pgoff) << PAGE_SHIFT,
++			pgoff,
+ 			MAJOR(dev), MINOR(dev), ino, &len);
+-#else /* CONFIG_MM_MODULES */
+- 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08llx %02x:%02x %lu %n",
+- 			start,
+- 			end,
+- 			flags & VM_READ ? 'r' : '-',
+- 			flags & VM_WRITE ? 'w' : '-',
+- 			flags & VM_EXEC ? 'x' : '-',
+- 			flags & VM_MAYSHARE ? 's' : 'p',
+- 			pgoff,
+- 			MAJOR(dev), MINOR(dev), ino, &len);
+-#endif /* CONFIG_MM_MODULES */
+ 
+ 	/*
+ 	 * Print the dentry name for named mappings, and a
+ 	 * special [heap] marker for the heap:
+ 	 */
+ 	if (file) {
+ 		pad_len_spaces(m, len);
+ 		seq_path(m, &file->f_path, "\n");
+@@ -600,19 +587,16 @@
+ 		.pmd_entry = smaps_pte_range,
+ 		.mm = vma->vm_mm,
+ 		.private = &mss,
+ 	};
+ 
+ 	memset(&mss, 0, sizeof mss);
+ 	mss.vma = vma;
+ 	/* mmap_sem is held in m_start */
+-#ifdef CONFIG_MM_MODULES
+-	if (!vma->mm_module_ops)
+-#endif /* CONFIG_MM_MODULES */
+ 	if (vma->vm_mm && !is_vm_hugetlb_page(vma))
+ 		walk_page_range(vma->vm_start, vma->vm_end, &smaps_walk);
+ 
+ 	show_map_vma(m, vma, is_pid);
+ 
+ 	seq_printf(m,
+ 		   "Size:           %8lu kB\n"
+ 		   "Rss:            %8lu kB\n"
+@@ -766,19 +750,16 @@
+ 	if (mm) {
+ 		struct mm_walk clear_refs_walk = {
+ 			.pmd_entry = clear_refs_pte_range,
+ 			.mm = mm,
+ 		};
+ 		down_read(&mm->mmap_sem);
+ 		for (vma = mm->mmap; vma; vma = vma->vm_next) {
+ 			clear_refs_walk.private = vma;
+-#ifdef CONFIG_MM_MODULES
+-			if (!vma->mm_module_ops)
+-#endif /* CONFIG_MM_MODULES */
+ 			if (is_vm_hugetlb_page(vma))
+ 				continue;
+ 			/*
+ 			 * Writing 1 to /proc/pid/clear_refs affects all pages.
+ 			 *
+ 			 * Writing 2 to /proc/pid/clear_refs only affects
+ 			 * Anonymous pages.
+ 			 *
+@@ -952,19 +933,16 @@
+ 		if (vma && (addr >= vma->vm_end)) {
+ 			vma = find_vma(walk->mm, addr);
+ 			pme = make_pme(PM_NOT_PRESENT);
+ 		}
+ 
+ 		/* check that 'vma' actually covers this address,
+ 		 * and that it isn't a huge page vma */
+ 		if (vma && (vma->vm_start <= addr) &&
+-#ifdef CONFIG_MM_MODULES
+-		    !vma->mm_module_ops &&
+-#endif /* CONFIG_MM_MODULES */
+ 		    !is_vm_hugetlb_page(vma)) {
+ 			pte = pte_offset_map(pmd, addr);
+ 			pte_to_pagemap_entry(&pme, vma, addr, *pte);
+ 			/* unmap before userspace copy */
+ 			pte_unmap(pte);
+ 		}
+ 		err = add_to_pagemap(addr, &pme, pm);
+ 		if (err)
+@@ -1320,21 +1298,16 @@
+ 			if (!is_pid || (vma->vm_start <= mm->start_stack &&
+ 			    vma->vm_end >= mm->start_stack))
+ 				seq_printf(m, " stack");
+ 			else
+ 				seq_printf(m, " stack:%d", tid);
+ 		}
+ 	}
+ 
+-#ifdef CONFIG_MM_MODULES
+-    if (vma->mm_module_ops) {
+-        seq_printf(m, " mm_module");
+-    }
+-#endif
+ 	if (is_vm_hugetlb_page(vma))
+ 		seq_printf(m, " huge");
+ 
+ 	walk_page_range(vma->vm_start, vma->vm_end, &walk);
+ 
+ 	if (!md->pages)
+ 		goto out;
+ 
+@@ -1349,19 +1322,16 @@
+ 
+ 	if (md->mapcount_max > 1)
+ 		seq_printf(m, " mapmax=%lu", md->mapcount_max);
+ 
+ 	if (md->swapcache)
+ 		seq_printf(m, " swapcache=%lu", md->swapcache);
+ 
+ 	if (md->active < md->pages && !is_vm_hugetlb_page(vma))
+-#ifdef CONFIG_MM_MODULES
+-        if(!vma->mm_module_ops)
+-#endif
+ 		seq_printf(m, " active=%lu", md->active);
+ 
+ 	if (md->writeback)
+ 		seq_printf(m, " writeback=%lu", md->writeback);
+ 
+ 	for_each_node_state(n, N_MEMORY)
+ 		if (md->node[n])
+ 			seq_printf(m, " N%d=%lu", n, md->node[n]);
+diff -Nau8r ./linux-mri/include/config/auto.conf ./linux-3.10.5/include/config/auto.conf
+--- ./linux-mri/include/config/auto.conf	2013-08-18 16:26:33.835690418 -0700
++++ ./linux-3.10.5/include/config/auto.conf	2013-08-04 19:59:22.086922406 -0700
+@@ -454,17 +454,16 @@
+ CONFIG_BLK_DEV_IO_TRACE=y
+ CONFIG_XPS=y
+ CONFIG_HPET_TIMER=y
+ CONFIG_CRYPTO_ALGAPI=y
+ CONFIG_BSD_PROCESS_ACCT_V3=y
+ CONFIG_TCG_ATMEL=y
+ CONFIG_ARCH_SUPPORTS_MSI=y
+ CONFIG_KEYBOARD_ATKBD=y
+-CONFIG_PMEM_MODULES=y
+ CONFIG_HAVE_MEMBLOCK_NODE_MAP=y
+ CONFIG_X86_PLATFORM_DEVICES=y
+ CONFIG_NET_IP_TUNNEL=y
+ CONFIG_CPU_IDLE=y
+ CONFIG_NFS_COMMON=y
+ CONFIG_FAIR_GROUP_SCHED=y
+ CONFIG_ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE=y
+ CONFIG_CRYPTO_HASH=y
+@@ -819,17 +818,16 @@
+ CONFIG_OPROFILE_NMI_TIMER=y
+ CONFIG_ARCH_SUPPORTS_DEBUG_PAGEALLOC=y
+ CONFIG_USB_DEBUG=y
+ CONFIG_HAS_IOPORT=y
+ CONFIG_CGROUP_CPUACCT=y
+ CONFIG_X86_CMPXCHG64=y
+ CONFIG_ISA_DMA_API=y
+ CONFIG_HZ=250
+-CONFIG_MM_MODULES=y
+ CONFIG_NEED_MULTIPLE_NODES=y
+ CONFIG_I2C_HELPER_AUTO=y
+ CONFIG_AGP_INTEL=m
+ CONFIG_ACPI_PROC_EVENT=y
+ CONFIG_INLINE_SPIN_UNLOCK_IRQ=y
+ CONFIG_DIRECT_GBPAGES=y
+ CONFIG_HAVE_USER_RETURN_NOTIFIER=y
+ CONFIG_DEFAULT_IOSCHED="deadline"
+diff -Nau8r ./linux-mri/include/generated/autoconf.h ./linux-3.10.5/include/generated/autoconf.h
+--- ./linux-mri/include/generated/autoconf.h	2013-08-18 16:26:33.835690418 -0700
++++ ./linux-3.10.5/include/generated/autoconf.h	2013-08-04 19:59:22.086922406 -0700
+@@ -456,17 +456,16 @@
+ #define CONFIG_BLK_DEV_IO_TRACE 1
+ #define CONFIG_XPS 1
+ #define CONFIG_HPET_TIMER 1
+ #define CONFIG_CRYPTO_ALGAPI 1
+ #define CONFIG_BSD_PROCESS_ACCT_V3 1
+ #define CONFIG_TCG_ATMEL 1
+ #define CONFIG_ARCH_SUPPORTS_MSI 1
+ #define CONFIG_KEYBOARD_ATKBD 1
+-#define CONFIG_PMEM_MODULES 1
+ #define CONFIG_HAVE_MEMBLOCK_NODE_MAP 1
+ #define CONFIG_X86_PLATFORM_DEVICES 1
+ #define CONFIG_NET_IP_TUNNEL 1
+ #define CONFIG_CPU_IDLE 1
+ #define CONFIG_NFS_COMMON 1
+ #define CONFIG_FAIR_GROUP_SCHED 1
+ #define CONFIG_ARCH_HAS_ATOMIC64_DEC_IF_POSITIVE 1
+ #define CONFIG_CRYPTO_HASH 1
+@@ -821,17 +820,16 @@
+ #define CONFIG_OPROFILE_NMI_TIMER 1
+ #define CONFIG_ARCH_SUPPORTS_DEBUG_PAGEALLOC 1
+ #define CONFIG_USB_DEBUG 1
+ #define CONFIG_HAS_IOPORT 1
+ #define CONFIG_CGROUP_CPUACCT 1
+ #define CONFIG_X86_CMPXCHG64 1
+ #define CONFIG_ISA_DMA_API 1
+ #define CONFIG_HZ 250
+-#define CONFIG_MM_MODULES 1
+ #define CONFIG_NEED_MULTIPLE_NODES 1
+ #define CONFIG_I2C_HELPER_AUTO 1
+ #define CONFIG_AGP_INTEL_MODULE 1
+ #define CONFIG_ACPI_PROC_EVENT 1
+ #define CONFIG_INLINE_SPIN_UNLOCK_IRQ 1
+ #define CONFIG_DIRECT_GBPAGES 1
+ #define CONFIG_HAVE_USER_RETURN_NOTIFIER 1
+ #define CONFIG_DEFAULT_IOSCHED "deadline"
+diff -Nau8r ./linux-mri/include/generated/bounds.h ./linux-3.10.5/include/generated/bounds.h
+--- ./linux-mri/include/generated/bounds.h	2013-08-18 16:26:36.331677316 -0700
++++ ./linux-3.10.5/include/generated/bounds.h	2013-08-04 19:59:23.974877675 -0700
+@@ -2,13 +2,13 @@
+ #define __LINUX_BOUNDS_H__
+ /*
+  * DO NOT MODIFY.
+  *
+  * This file was generated by Kbuild
+  *
+  */
+ 
+-#define NR_PAGEFLAGS 25 /* __NR_PAGEFLAGS	# */
++#define NR_PAGEFLAGS 24 /* __NR_PAGEFLAGS	# */
+ #define MAX_NR_ZONES 4 /* __MAX_NR_ZONES	# */
+ #define NR_PCG_FLAGS 3 /* __NR_PCG_FLAGS	# */
+ 
+ #endif
+diff -Nau8r ./linux-mri/include/linux/mm.h ./linux-3.10.5/include/linux/mm.h
+--- ./linux-mri/include/linux/mm.h	2013-08-18 16:49:29.973487434 -0700
++++ ./linux-3.10.5/include/linux/mm.h	2013-08-04 01:51:49.000000000 -0700
+@@ -235,57 +235,16 @@
+ 	/* called by sys_remap_file_pages() to populate non-linear mapping */
+ 	int (*remap_pages)(struct vm_area_struct *vma, unsigned long addr,
+ 			   unsigned long size, pgoff_t pgoff);
+ };
+ 
+ struct mmu_gather;
+ struct inode;
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-struct pmem_module_operations_struct {
+-	int (*put_page)(struct page *page);
+-	int (*get_page)(struct page *page);
+-	int (*sparse_mem_map_populate)(unsigned long pnum, int nid);
+-};
+-#endif /* CONFIG_PMEM_MODULES */
+-
+-#ifdef CONFIG_MM_MODULES
+-struct zap_details;
+-
+-struct mm_module_operations_struct {
+-	int (*handle_mm_fault)(struct mm_struct *mm,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			unsigned int flags);
+-	int (*change_protection)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long end, unsigned long newflags);
+-	int (*copy_page_range)(struct mm_struct *dst_mm,
+-			struct mm_struct *src_mm, struct vm_area_struct *vma);
+-	int (*follow_page)(struct mm_struct *mm, struct vm_area_struct *vma,
+-			struct page **pages, struct vm_area_struct **vmas,
+-			unsigned long *position, int *length,
+-			int i, int write);
+-	int (*probe_mapped)(struct vm_area_struct *vma, unsigned long start,
+-			unsigned long *end_range, unsigned long *range_vm_flags);
+-	unsigned long (*unmap_page_range)(struct mmu_gather **tlbp,
+-			struct vm_area_struct *vma, unsigned long addr,
+-			unsigned long end, struct zap_details *details); 
+-	void (*free_pgd_range)(struct mmu_gather *tlb, unsigned long addr,
+-			unsigned long end, unsigned long floor,
+-			unsigned long ceiling);
+-	int (*init_module_vma)(struct vm_area_struct *vma,
+-			struct vm_area_struct *old_vma);
+-	void (*exit_module_vma)(struct vm_area_struct *vma);
+-	int (*init_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-	int (*exit_module_mm)(struct mm_struct *mm,
+-			struct mm_module_struct *mm_mod);
+-};
+-#endif /* CONFIG_MM_MODULES */
+-
+ #define page_private(page)		((page)->private)
+ #define set_page_private(page, v)	((page)->private = (v))
+ 
+ /* It's valid only if the page is free path or free_list */
+ static inline void set_freepage_migratetype(struct page *page, int migratetype)
+ {
+ 	page->index = migratetype;
+ }
+@@ -298,42 +257,16 @@
+ 
+ /*
+  * FIXME: take this include out, include page-flags.h in
+  * files which need it (119 of them)
+  */
+ #include <linux/page-flags.h>
+ #include <linux/huge_mm.h>
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-static inline void pmem_modules_get_page(struct page *page)
+-{
+-	struct pmem_module_struct *module = pmem_modules;
+-	for (module = pmem_modules; module; module = module->next) {
+-		VM_BUG_ON(!module->pmem_module_ops->get_page);
+-		if (module->pmem_module_ops->get_page(page))
+-			return;
+-	}
+-	/* One of the modules should have picked the page up */
+-	BUG();
+-}
+-
+-static inline void pmem_modules_put_page(struct page *page)
+-{
+-	struct pmem_module_struct *module = pmem_modules;
+-	for (module = pmem_modules; module; module = module->next) {
+-		VM_BUG_ON(!module->pmem_module_ops->put_page);
+-		if (module->pmem_module_ops->put_page(page))
+-			return;
+-	}
+-	/* One of the modules should have picked the page up */
+-	BUG();
+-}
+-#endif /* CONFIG_PMEM_MODULES */
+-
+ /*
+  * Methods to modify the page usage count.
+  *
+  * What counts for a page usage:
+  * - cache mapping   (page->mapping)
+  * - private data    (page->private)
+  * - page mapped in a task's page tables, each mapping
+  *   is counted separately
+@@ -463,22 +396,16 @@
+ 	VM_BUG_ON(atomic_read(&page->_count) != 0);
+ 	atomic_inc(&page->_mapcount);
+ }
+ 
+ extern bool __get_page_tail(struct page *page);
+ 
+ static inline void get_page(struct page *page)
+ {
+-#ifdef CONFIG_PMEM_MODULES
+-	if (unlikely(PagePmemModule(page))) {
+-		pmem_modules_get_page(page);
+-		return;
+-	}
+-#endif /* CONFIG_PMEM_MODULES */
+ 	if (unlikely(PageTail(page)))
+ 		if (likely(__get_page_tail(page)))
+ 			return;
+ 	/*
+ 	 * Getting a normal page or the head of a compound page
+ 	 * requires to already have an elevated page->_count.
+ 	 */
+ 	VM_BUG_ON(atomic_read(&page->_count) <= 0);
+@@ -952,27 +879,18 @@
+ #define VM_FAULT_HWPOISON_LARGE 0x0020  /* Hit poisoned large page. Index encoded in upper bits */
+ 
+ #define VM_FAULT_NOPAGE	0x0100	/* ->fault installed the pte, not return page */
+ #define VM_FAULT_LOCKED	0x0200	/* ->fault locked the returned page */
+ #define VM_FAULT_RETRY	0x0400	/* ->fault blocked, must retry */
+ 
+ #define VM_FAULT_HWPOISON_LARGE_MASK 0xf000 /* encodes hpage index for large hwpoison */
+ 
+-#ifdef CONFIG_MM_MODULES
+-#define VM_FAULT_SEGV_ACCERR	0x1000
+-#define VM_FAULT_SEGV_MAPERR	0x2000
+-#define VM_FAULT_SIGSEGV	(VM_FAULT_SEGV_ACCERR | VM_FAULT_SEGV_MAPERR)
+-#define VM_FAULT_ERROR \
+-	(VM_FAULT_OOM | VM_FAULT_SIGBUS | VM_FAULT_HWPOISON | \
+-	 VM_FAULT_HWPOISON_LARGE | VM_FAULT_SIGSEGV)
+-#else /* !CONFIG_MM_MODULES */
+ #define VM_FAULT_ERROR	(VM_FAULT_OOM | VM_FAULT_SIGBUS | VM_FAULT_HWPOISON | \
+ 			 VM_FAULT_HWPOISON_LARGE)
+-#endif /* CONFIG_MM_MODULES */
+ 
+ /* Encode hstate index for a hwpoisoned large page */
+ #define VM_FAULT_SET_HINDEX(x) ((x) << 12)
+ #define VM_FAULT_GET_HINDEX(x) (((x) >> 12) & 0xf)
+ 
+ /*
+  * Can be called by the pagefault handler when it gets a VM_FAULT_OOM.
+  */
+diff -Nau8r ./linux-mri/include/linux/mm_types.h ./linux-3.10.5/include/linux/mm_types.h
+--- ./linux-mri/include/linux/mm_types.h	2013-08-18 15:58:15.007561529 -0700
++++ ./linux-3.10.5/include/linux/mm_types.h	2013-08-04 01:51:49.000000000 -0700
+@@ -284,20 +284,16 @@
+ 	void * vm_private_data;		/* was vm_pte (shared mem) */
+ 
+ #ifndef CONFIG_MMU
+ 	struct vm_region *vm_region;	/* NOMMU mapping region */
+ #endif
+ #ifdef CONFIG_NUMA
+ 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
+ #endif
+-#ifdef CONFIG_MM_MODULES
+-	struct mm_module_operations_struct * mm_module_ops;
+-	void * mm_module_vma_state;
+-#endif
+ };
+ 
+ struct core_thread {
+ 	struct task_struct *task;
+ 	struct core_thread *next;
+ };
+ 
+ struct core_state {
+@@ -321,33 +317,16 @@
+ 	int count[NR_MM_COUNTERS];
+ };
+ #endif /* USE_SPLIT_PTLOCKS */
+ 
+ struct mm_rss_stat {
+ 	atomic_long_t count[NR_MM_COUNTERS];
+ };
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-struct pmem_module_struct {
+-	struct pmem_module_operations_struct * pmem_module_ops;
+-	struct pmem_module_struct *next;
+-};
+-
+-extern struct pmem_module_struct *pmem_modules;
+-#endif /* CONFIG_PMEM_MODULES */
+-
+-#ifdef CONFIG_MM_MODULES
+-struct mm_module_struct {
+-	struct mm_module_operations_struct * mm_module_ops;
+-	void * mm_module_mm_state;
+-	struct mm_module_struct *next;
+-};
+-#endif /* CONFIG_MM_MODULES */
+-
+ struct mm_struct {
+ 	struct vm_area_struct * mmap;		/* list of VMAs */
+ 	struct rb_root mm_rb;
+ 	struct vm_area_struct * mmap_cache;	/* last find_vma result */
+ #ifdef CONFIG_MMU
+ 	unsigned long (*get_unmapped_area) (struct file *filp,
+ 				unsigned long addr, unsigned long len,
+ 				unsigned long pgoff, unsigned long flags);
+@@ -423,19 +402,16 @@
+ 	struct task_struct __rcu *owner;
+ #endif
+ 
+ 	/* store ref to file /proc/<pid>/exe symlink points to */
+ 	struct file *exe_file;
+ #ifdef CONFIG_MMU_NOTIFIER
+ 	struct mmu_notifier_mm *mmu_notifier_mm;
+ #endif
+-#ifdef CONFIG_MM_MODULES
+-	struct mm_module_struct *mm_modules;
+-#endif /* CONFIG_MM_MODULES */
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+ 	pgtable_t pmd_huge_pte; /* protected by page_table_lock */
+ #endif
+ #ifdef CONFIG_CPUMASK_OFFSTACK
+ 	struct cpumask cpumask_allocation;
+ #endif
+ #ifdef CONFIG_NUMA_BALANCING
+ 	/*
+diff -Nau8r ./linux-mri/include/linux/page-flags.h ./linux-3.10.5/include/linux/page-flags.h
+--- ./linux-mri/include/linux/page-flags.h	2013-08-18 15:58:30.331486863 -0700
++++ ./linux-3.10.5/include/linux/page-flags.h	2013-08-04 01:51:49.000000000 -0700
+@@ -101,19 +101,16 @@
+ 	PG_mlocked,		/* Page is vma mlocked */
+ #endif
+ #ifdef CONFIG_ARCH_USES_PG_UNCACHED
+ 	PG_uncached,		/* Page has been mapped as uncached */
+ #endif
+ #ifdef CONFIG_MEMORY_FAILURE
+ 	PG_hwpoison,		/* hardware poisoned page. Don't touch */
+ #endif
+-#ifdef CONFIG_PMEM_MODULES
+-	PG_pmem_module,
+-#endif /* CONFIG_PMEM_MODULES */
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+ 	PG_compound_lock,
+ #endif
+ 	__NR_PAGEFLAGS,
+ 
+ 	/* Filesystems */
+ 	PG_checked = PG_owner_priv_1,
+ 
+@@ -275,22 +272,16 @@
+ #define __PG_HWPOISON (1UL << PG_hwpoison)
+ #else
+ PAGEFLAG_FALSE(HWPoison)
+ #define __PG_HWPOISON 0
+ #endif
+ 
+ u64 stable_page_flags(struct page *page);
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-PAGEFLAG(PmemModule, pmem_module)
+-#else /* !CONFIG_PMEM_MODULES */
+-PAGEFLAG_FALSE(PmemModule)
+-#endif /* CONFIG_PMEM_MODULES */
+-
+ static inline int PageUptodate(struct page *page)
+ {
+ 	int ret = test_bit(PG_uptodate, &(page)->flags);
+ 
+ 	/*
+ 	 * Must ensure that the data we read out of the page is loaded
+ 	 * _after_ we've loaded page->flags to check for PageUptodate.
+ 	 * We can skip the barrier if the page is not uptodate, because
+diff -Nau8r ./linux-mri/include/linux/page-flags.h.orig ./linux-3.10.5/include/linux/page-flags.h.orig
+--- ./linux-mri/include/linux/page-flags.h.orig	2013-08-18 13:50:29.417407494 -0700
++++ ./linux-3.10.5/include/linux/page-flags.h.orig	1969-12-31 16:00:00.000000000 -0800
+@@ -1,530 +0,0 @@
+-/*
+- * Macros for manipulating and testing page->flags
+- */
+-
+-#ifndef PAGE_FLAGS_H
+-#define PAGE_FLAGS_H
+-
+-#include <linux/types.h>
+-#include <linux/bug.h>
+-#include <linux/mmdebug.h>
+-#ifndef __GENERATING_BOUNDS_H
+-#include <linux/mm_types.h>
+-#include <generated/bounds.h>
+-#endif /* !__GENERATING_BOUNDS_H */
+-
+-/*
+- * Various page->flags bits:
+- *
+- * PG_reserved is set for special pages, which can never be swapped out. Some
+- * of them might not even exist (eg empty_bad_page)...
+- *
+- * The PG_private bitflag is set on pagecache pages if they contain filesystem
+- * specific data (which is normally at page->private). It can be used by
+- * private allocations for its own usage.
+- *
+- * During initiation of disk I/O, PG_locked is set. This bit is set before I/O
+- * and cleared when writeback _starts_ or when read _completes_. PG_writeback
+- * is set before writeback starts and cleared when it finishes.
+- *
+- * PG_locked also pins a page in pagecache, and blocks truncation of the file
+- * while it is held.
+- *
+- * page_waitqueue(page) is a wait queue of all tasks waiting for the page
+- * to become unlocked.
+- *
+- * PG_uptodate tells whether the page's contents is valid.  When a read
+- * completes, the page becomes uptodate, unless a disk I/O error happened.
+- *
+- * PG_referenced, PG_reclaim are used for page reclaim for anonymous and
+- * file-backed pagecache (see mm/vmscan.c).
+- *
+- * PG_error is set to indicate that an I/O error occurred on this page.
+- *
+- * PG_arch_1 is an architecture specific page state bit.  The generic code
+- * guarantees that this bit is cleared for a page when it first is entered into
+- * the page cache.
+- *
+- * PG_highmem pages are not permanently mapped into the kernel virtual address
+- * space, they need to be kmapped separately for doing IO on the pages.  The
+- * struct page (these bits with information) are always mapped into kernel
+- * address space...
+- *
+- * PG_hwpoison indicates that a page got corrupted in hardware and contains
+- * data with incorrect ECC bits that triggered a machine check. Accessing is
+- * not safe since it may cause another machine check. Don't touch!
+- */
+-
+-/*
+- * Don't use the *_dontuse flags.  Use the macros.  Otherwise you'll break
+- * locked- and dirty-page accounting.
+- *
+- * The page flags field is split into two parts, the main flags area
+- * which extends from the low bits upwards, and the fields area which
+- * extends from the high bits downwards.
+- *
+- *  | FIELD | ... | FLAGS |
+- *  N-1           ^       0
+- *               (NR_PAGEFLAGS)
+- *
+- * The fields area is reserved for fields mapping zone, node (for NUMA) and
+- * SPARSEMEM section (for variants of SPARSEMEM that require section ids like
+- * SPARSEMEM_EXTREME with !SPARSEMEM_VMEMMAP).
+- */
+-enum pageflags {
+-	PG_locked,		/* Page is locked. Don't touch. */
+-	PG_error,
+-	PG_referenced,
+-	PG_uptodate,
+-	PG_dirty,
+-	PG_lru,
+-	PG_active,
+-	PG_slab,
+-	PG_owner_priv_1,	/* Owner use. If pagecache, fs may use*/
+-	PG_arch_1,
+-	PG_reserved,
+-	PG_private,		/* If pagecache, has fs-private data */
+-	PG_private_2,		/* If pagecache, has fs aux data */
+-	PG_writeback,		/* Page is under writeback */
+-#ifdef CONFIG_PAGEFLAGS_EXTENDED
+-	PG_head,		/* A head page */
+-	PG_tail,		/* A tail page */
+-#else
+-	PG_compound,		/* A compound page */
+-#endif
+-	PG_swapcache,		/* Swap page: swp_entry_t in private */
+-	PG_mappedtodisk,	/* Has blocks allocated on-disk */
+-	PG_reclaim,		/* To be reclaimed asap */
+-	PG_swapbacked,		/* Page is backed by RAM/swap */
+-	PG_unevictable,		/* Page is "unevictable"  */
+-#ifdef CONFIG_MMU
+-	PG_mlocked,		/* Page is vma mlocked */
+-#endif
+-#ifdef CONFIG_ARCH_USES_PG_UNCACHED
+-	PG_uncached,		/* Page has been mapped as uncached */
+-#endif
+-#ifdef CONFIG_MEMORY_FAILURE
+-	PG_hwpoison,		/* hardware poisoned page. Don't touch */
+-#endif
+-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+-	PG_compound_lock,
+-#endif
+-	__NR_PAGEFLAGS,
+-
+-	/* Filesystems */
+-	PG_checked = PG_owner_priv_1,
+-
+-	/* Two page bits are conscripted by FS-Cache to maintain local caching
+-	 * state.  These bits are set on pages belonging to the netfs's inodes
+-	 * when those inodes are being locally cached.
+-	 */
+-	PG_fscache = PG_private_2,	/* page backed by cache */
+-
+-	/* XEN */
+-	PG_pinned = PG_owner_priv_1,
+-	PG_savepinned = PG_dirty,
+-
+-	/* SLOB */
+-	PG_slob_free = PG_private,
+-};
+-
+-#ifndef __GENERATING_BOUNDS_H
+-
+-/*
+- * Macros to create function definitions for page flags
+- */
+-#define TESTPAGEFLAG(uname, lname)					\
+-static inline int Page##uname(const struct page *page)			\
+-			{ return test_bit(PG_##lname, &page->flags); }
+-
+-#define SETPAGEFLAG(uname, lname)					\
+-static inline void SetPage##uname(struct page *page)			\
+-			{ set_bit(PG_##lname, &page->flags); }
+-
+-#define CLEARPAGEFLAG(uname, lname)					\
+-static inline void ClearPage##uname(struct page *page)			\
+-			{ clear_bit(PG_##lname, &page->flags); }
+-
+-#define __SETPAGEFLAG(uname, lname)					\
+-static inline void __SetPage##uname(struct page *page)			\
+-			{ __set_bit(PG_##lname, &page->flags); }
+-
+-#define __CLEARPAGEFLAG(uname, lname)					\
+-static inline void __ClearPage##uname(struct page *page)		\
+-			{ __clear_bit(PG_##lname, &page->flags); }
+-
+-#define TESTSETFLAG(uname, lname)					\
+-static inline int TestSetPage##uname(struct page *page)			\
+-		{ return test_and_set_bit(PG_##lname, &page->flags); }
+-
+-#define TESTCLEARFLAG(uname, lname)					\
+-static inline int TestClearPage##uname(struct page *page)		\
+-		{ return test_and_clear_bit(PG_##lname, &page->flags); }
+-
+-#define __TESTCLEARFLAG(uname, lname)					\
+-static inline int __TestClearPage##uname(struct page *page)		\
+-		{ return __test_and_clear_bit(PG_##lname, &page->flags); }
+-
+-#define PAGEFLAG(uname, lname) TESTPAGEFLAG(uname, lname)		\
+-	SETPAGEFLAG(uname, lname) CLEARPAGEFLAG(uname, lname)
+-
+-#define __PAGEFLAG(uname, lname) TESTPAGEFLAG(uname, lname)		\
+-	__SETPAGEFLAG(uname, lname)  __CLEARPAGEFLAG(uname, lname)
+-
+-#define PAGEFLAG_FALSE(uname) 						\
+-static inline int Page##uname(const struct page *page)			\
+-			{ return 0; }
+-
+-#define TESTSCFLAG(uname, lname)					\
+-	TESTSETFLAG(uname, lname) TESTCLEARFLAG(uname, lname)
+-
+-#define SETPAGEFLAG_NOOP(uname)						\
+-static inline void SetPage##uname(struct page *page) {  }
+-
+-#define CLEARPAGEFLAG_NOOP(uname)					\
+-static inline void ClearPage##uname(struct page *page) {  }
+-
+-#define __CLEARPAGEFLAG_NOOP(uname)					\
+-static inline void __ClearPage##uname(struct page *page) {  }
+-
+-#define TESTCLEARFLAG_FALSE(uname)					\
+-static inline int TestClearPage##uname(struct page *page) { return 0; }
+-
+-#define __TESTCLEARFLAG_FALSE(uname)					\
+-static inline int __TestClearPage##uname(struct page *page) { return 0; }
+-
+-struct page;	/* forward declaration */
+-
+-TESTPAGEFLAG(Locked, locked)
+-PAGEFLAG(Error, error) TESTCLEARFLAG(Error, error)
+-PAGEFLAG(Referenced, referenced) TESTCLEARFLAG(Referenced, referenced)
+-PAGEFLAG(Dirty, dirty) TESTSCFLAG(Dirty, dirty) __CLEARPAGEFLAG(Dirty, dirty)
+-PAGEFLAG(LRU, lru) __CLEARPAGEFLAG(LRU, lru)
+-PAGEFLAG(Active, active) __CLEARPAGEFLAG(Active, active)
+-	TESTCLEARFLAG(Active, active)
+-__PAGEFLAG(Slab, slab)
+-PAGEFLAG(Checked, checked)		/* Used by some filesystems */
+-PAGEFLAG(Pinned, pinned) TESTSCFLAG(Pinned, pinned)	/* Xen */
+-PAGEFLAG(SavePinned, savepinned);			/* Xen */
+-PAGEFLAG(Reserved, reserved) __CLEARPAGEFLAG(Reserved, reserved)
+-PAGEFLAG(SwapBacked, swapbacked) __CLEARPAGEFLAG(SwapBacked, swapbacked)
+-
+-__PAGEFLAG(SlobFree, slob_free)
+-
+-/*
+- * Private page markings that may be used by the filesystem that owns the page
+- * for its own purposes.
+- * - PG_private and PG_private_2 cause releasepage() and co to be invoked
+- */
+-PAGEFLAG(Private, private) __SETPAGEFLAG(Private, private)
+-	__CLEARPAGEFLAG(Private, private)
+-PAGEFLAG(Private2, private_2) TESTSCFLAG(Private2, private_2)
+-PAGEFLAG(OwnerPriv1, owner_priv_1) TESTCLEARFLAG(OwnerPriv1, owner_priv_1)
+-
+-/*
+- * Only test-and-set exist for PG_writeback.  The unconditional operators are
+- * risky: they bypass page accounting.
+- */
+-TESTPAGEFLAG(Writeback, writeback) TESTSCFLAG(Writeback, writeback)
+-PAGEFLAG(MappedToDisk, mappedtodisk)
+-
+-/* PG_readahead is only used for file reads; PG_reclaim is only for writes */
+-PAGEFLAG(Reclaim, reclaim) TESTCLEARFLAG(Reclaim, reclaim)
+-PAGEFLAG(Readahead, reclaim)		/* Reminder to do async read-ahead */
+-
+-#ifdef CONFIG_HIGHMEM
+-/*
+- * Must use a macro here due to header dependency issues. page_zone() is not
+- * available at this point.
+- */
+-#define PageHighMem(__p) is_highmem(page_zone(__p))
+-#else
+-PAGEFLAG_FALSE(HighMem)
+-#endif
+-
+-#ifdef CONFIG_SWAP
+-PAGEFLAG(SwapCache, swapcache)
+-#else
+-PAGEFLAG_FALSE(SwapCache)
+-	SETPAGEFLAG_NOOP(SwapCache) CLEARPAGEFLAG_NOOP(SwapCache)
+-#endif
+-
+-PAGEFLAG(Unevictable, unevictable) __CLEARPAGEFLAG(Unevictable, unevictable)
+-	TESTCLEARFLAG(Unevictable, unevictable)
+-
+-#ifdef CONFIG_MMU
+-PAGEFLAG(Mlocked, mlocked) __CLEARPAGEFLAG(Mlocked, mlocked)
+-	TESTSCFLAG(Mlocked, mlocked) __TESTCLEARFLAG(Mlocked, mlocked)
+-#else
+-PAGEFLAG_FALSE(Mlocked) SETPAGEFLAG_NOOP(Mlocked)
+-	TESTCLEARFLAG_FALSE(Mlocked) __TESTCLEARFLAG_FALSE(Mlocked)
+-#endif
+-
+-#ifdef CONFIG_ARCH_USES_PG_UNCACHED
+-PAGEFLAG(Uncached, uncached)
+-#else
+-PAGEFLAG_FALSE(Uncached)
+-#endif
+-
+-#ifdef CONFIG_MEMORY_FAILURE
+-PAGEFLAG(HWPoison, hwpoison)
+-TESTSCFLAG(HWPoison, hwpoison)
+-#define __PG_HWPOISON (1UL << PG_hwpoison)
+-#else
+-PAGEFLAG_FALSE(HWPoison)
+-#define __PG_HWPOISON 0
+-#endif
+-
+-u64 stable_page_flags(struct page *page);
+-
+-static inline int PageUptodate(struct page *page)
+-{
+-	int ret = test_bit(PG_uptodate, &(page)->flags);
+-
+-	/*
+-	 * Must ensure that the data we read out of the page is loaded
+-	 * _after_ we've loaded page->flags to check for PageUptodate.
+-	 * We can skip the barrier if the page is not uptodate, because
+-	 * we wouldn't be reading anything from it.
+-	 *
+-	 * See SetPageUptodate() for the other side of the story.
+-	 */
+-	if (ret)
+-		smp_rmb();
+-
+-	return ret;
+-}
+-
+-static inline void __SetPageUptodate(struct page *page)
+-{
+-	smp_wmb();
+-	__set_bit(PG_uptodate, &(page)->flags);
+-}
+-
+-static inline void SetPageUptodate(struct page *page)
+-{
+-	/*
+-	 * Memory barrier must be issued before setting the PG_uptodate bit,
+-	 * so that all previous stores issued in order to bring the page
+-	 * uptodate are actually visible before PageUptodate becomes true.
+-	 */
+-	smp_wmb();
+-	set_bit(PG_uptodate, &(page)->flags);
+-}
+-
+-CLEARPAGEFLAG(Uptodate, uptodate)
+-
+-extern void cancel_dirty_page(struct page *page, unsigned int account_size);
+-
+-int test_clear_page_writeback(struct page *page);
+-int test_set_page_writeback(struct page *page);
+-
+-static inline void set_page_writeback(struct page *page)
+-{
+-	test_set_page_writeback(page);
+-}
+-
+-#ifdef CONFIG_PAGEFLAGS_EXTENDED
+-/*
+- * System with lots of page flags available. This allows separate
+- * flags for PageHead() and PageTail() checks of compound pages so that bit
+- * tests can be used in performance sensitive paths. PageCompound is
+- * generally not used in hot code paths.
+- */
+-__PAGEFLAG(Head, head) CLEARPAGEFLAG(Head, head)
+-__PAGEFLAG(Tail, tail)
+-
+-static inline int PageCompound(struct page *page)
+-{
+-	return page->flags & ((1L << PG_head) | (1L << PG_tail));
+-
+-}
+-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+-static inline void ClearPageCompound(struct page *page)
+-{
+-	BUG_ON(!PageHead(page));
+-	ClearPageHead(page);
+-}
+-#endif
+-#else
+-/*
+- * Reduce page flag use as much as possible by overlapping
+- * compound page flags with the flags used for page cache pages. Possible
+- * because PageCompound is always set for compound pages and not for
+- * pages on the LRU and/or pagecache.
+- */
+-TESTPAGEFLAG(Compound, compound)
+-__SETPAGEFLAG(Head, compound)  __CLEARPAGEFLAG(Head, compound)
+-
+-/*
+- * PG_reclaim is used in combination with PG_compound to mark the
+- * head and tail of a compound page. This saves one page flag
+- * but makes it impossible to use compound pages for the page cache.
+- * The PG_reclaim bit would have to be used for reclaim or readahead
+- * if compound pages enter the page cache.
+- *
+- * PG_compound & PG_reclaim	=> Tail page
+- * PG_compound & ~PG_reclaim	=> Head page
+- */
+-#define PG_head_mask ((1L << PG_compound))
+-#define PG_head_tail_mask ((1L << PG_compound) | (1L << PG_reclaim))
+-
+-static inline int PageHead(struct page *page)
+-{
+-	return ((page->flags & PG_head_tail_mask) == PG_head_mask);
+-}
+-
+-static inline int PageTail(struct page *page)
+-{
+-	return ((page->flags & PG_head_tail_mask) == PG_head_tail_mask);
+-}
+-
+-static inline void __SetPageTail(struct page *page)
+-{
+-	page->flags |= PG_head_tail_mask;
+-}
+-
+-static inline void __ClearPageTail(struct page *page)
+-{
+-	page->flags &= ~PG_head_tail_mask;
+-}
+-
+-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+-static inline void ClearPageCompound(struct page *page)
+-{
+-	BUG_ON((page->flags & PG_head_tail_mask) != (1 << PG_compound));
+-	clear_bit(PG_compound, &page->flags);
+-}
+-#endif
+-
+-#endif /* !PAGEFLAGS_EXTENDED */
+-
+-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+-/*
+- * PageHuge() only returns true for hugetlbfs pages, but not for
+- * normal or transparent huge pages.
+- *
+- * PageTransHuge() returns true for both transparent huge and
+- * hugetlbfs pages, but not normal pages. PageTransHuge() can only be
+- * called only in the core VM paths where hugetlbfs pages can't exist.
+- */
+-static inline int PageTransHuge(struct page *page)
+-{
+-	VM_BUG_ON(PageTail(page));
+-	return PageHead(page);
+-}
+-
+-/*
+- * PageTransCompound returns true for both transparent huge pages
+- * and hugetlbfs pages, so it should only be called when it's known
+- * that hugetlbfs pages aren't involved.
+- */
+-static inline int PageTransCompound(struct page *page)
+-{
+-	return PageCompound(page);
+-}
+-
+-/*
+- * PageTransTail returns true for both transparent huge pages
+- * and hugetlbfs pages, so it should only be called when it's known
+- * that hugetlbfs pages aren't involved.
+- */
+-static inline int PageTransTail(struct page *page)
+-{
+-	return PageTail(page);
+-}
+-
+-#else
+-
+-static inline int PageTransHuge(struct page *page)
+-{
+-	return 0;
+-}
+-
+-static inline int PageTransCompound(struct page *page)
+-{
+-	return 0;
+-}
+-
+-static inline int PageTransTail(struct page *page)
+-{
+-	return 0;
+-}
+-#endif
+-
+-/*
+- * If network-based swap is enabled, sl*b must keep track of whether pages
+- * were allocated from pfmemalloc reserves.
+- */
+-static inline int PageSlabPfmemalloc(struct page *page)
+-{
+-	VM_BUG_ON(!PageSlab(page));
+-	return PageActive(page);
+-}
+-
+-static inline void SetPageSlabPfmemalloc(struct page *page)
+-{
+-	VM_BUG_ON(!PageSlab(page));
+-	SetPageActive(page);
+-}
+-
+-static inline void __ClearPageSlabPfmemalloc(struct page *page)
+-{
+-	VM_BUG_ON(!PageSlab(page));
+-	__ClearPageActive(page);
+-}
+-
+-static inline void ClearPageSlabPfmemalloc(struct page *page)
+-{
+-	VM_BUG_ON(!PageSlab(page));
+-	ClearPageActive(page);
+-}
+-
+-#ifdef CONFIG_MMU
+-#define __PG_MLOCKED		(1 << PG_mlocked)
+-#else
+-#define __PG_MLOCKED		0
+-#endif
+-
+-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+-#define __PG_COMPOUND_LOCK		(1 << PG_compound_lock)
+-#else
+-#define __PG_COMPOUND_LOCK		0
+-#endif
+-
+-/*
+- * Flags checked when a page is freed.  Pages being freed should not have
+- * these flags set.  It they are, there is a problem.
+- */
+-#define PAGE_FLAGS_CHECK_AT_FREE \
+-	(1 << PG_lru	 | 1 << PG_locked    | \
+-	 1 << PG_private | 1 << PG_private_2 | \
+-	 1 << PG_writeback | 1 << PG_reserved | \
+-	 1 << PG_slab	 | 1 << PG_swapcache | 1 << PG_active | \
+-	 1 << PG_unevictable | __PG_MLOCKED | __PG_HWPOISON | \
+-	 __PG_COMPOUND_LOCK)
+-
+-/*
+- * Flags checked when a page is prepped for return by the page allocator.
+- * Pages being prepped should not have any flags set.  It they are set,
+- * there has been a kernel bug or struct page corruption.
+- */
+-#define PAGE_FLAGS_CHECK_AT_PREP	((1 << NR_PAGEFLAGS) - 1)
+-
+-#define PAGE_FLAGS_PRIVATE				\
+-	(1 << PG_private | 1 << PG_private_2)
+-/**
+- * page_has_private - Determine if page has private stuff
+- * @page: The page to be checked
+- *
+- * Determine if a page has private stuff, indicating that release routines
+- * should be invoked upon it.
+- */
+-static inline int page_has_private(struct page *page)
+-{
+-	return !!(page->flags & PAGE_FLAGS_PRIVATE);
+-}
+-
+-#endif /* !__GENERATING_BOUNDS_H */
+-
+-#endif	/* PAGE_FLAGS_H */
+diff -Nau8r ./linux-mri/kernel/fork.c ./linux-3.10.5/kernel/fork.c
+--- ./linux-mri/kernel/fork.c	2013-08-18 16:01:39.610525852 -0700
++++ ./linux-3.10.5/kernel/fork.c	2013-08-04 01:51:49.000000000 -0700
+@@ -430,23 +430,16 @@
+ 						&mapping->i_mmap_nonlinear);
+ 			else
+ 				vma_interval_tree_insert_after(tmp, mpnt,
+ 							&mapping->i_mmap);
+ 			flush_dcache_mmap_unlock(mapping);
+ 			mutex_unlock(&mapping->i_mmap_mutex);
+ 		}
+ 
+-#ifdef CONFIG_MM_MODULES
+-		if (mpnt->mm_module_ops) {
+-			BUG_ON(!mpnt->mm_module_ops->init_module_vma);
+-			mpnt->mm_module_ops->init_module_vma(tmp, mpnt);
+-		}
+-#endif /* CONFIG_MM_MODULES */
+-
+ 		/*
+ 		 * Clear hugetlb-related page reserves for children. This only
+ 		 * affects MAP_PRIVATE mappings. Faults generated by the child
+ 		 * are not guaranteed to succeed, even if read-only
+ 		 */
+ 		if (is_vm_hugetlb_page(tmp))
+ 			reset_vma_resv_huge_pages(tmp);
+ 
+@@ -530,51 +523,16 @@
+ static void mm_init_aio(struct mm_struct *mm)
+ {
+ #ifdef CONFIG_AIO
+ 	spin_lock_init(&mm->ioctx_lock);
+ 	INIT_HLIST_HEAD(&mm->ioctx_list);
+ #endif
+ }
+ 
+-#ifdef CONFIG_MM_MODULES
+-void mm_modules_init(struct mm_struct * mm)
+-{
+-	struct mm_module_struct *old_mm_modules;
+-	struct mm_module_struct *module;
+-
+-	/* Extract old mm's modules list, initialize new mm's list: */
+-	old_mm_modules = mm->mm_modules;
+-	mm->mm_modules = NULL;
+-
+-	/* Iterate on modules. Allow each to initialize new mm based on old: */
+-	for (module = old_mm_modules; module; module = module->next) {
+-		BUG_ON(!module->mm_module_ops);
+-		BUG_ON(!module->mm_module_ops->init_module_mm);
+-		module->mm_module_ops->init_module_mm(mm, module);
+-	}
+-}
+-
+-void mm_modules_exit(struct mm_struct * mm)
+-{
+-	struct mm_module_struct *module;
+-
+-	/*
+-	 * Modules will remove their own mm_module_struct and free it,
+-	 * so keep calling the top module's mm_exit_module call
+-	 * until none are left.
+-	 */
+-	while ((module = mm->mm_modules)) {
+-		BUG_ON(!module->mm_module_ops);
+-		BUG_ON(!module->mm_module_ops->exit_module_mm);
+-		module->mm_module_ops->exit_module_mm(mm, module);
+-	}
+-}
+-#endif /* CONFIG_MM_MODULES */
+-
+ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
+ {
+ 	atomic_set(&mm->mm_users, 1);
+ 	atomic_set(&mm->mm_count, 1);
+ 	init_rwsem(&mm->mmap_sem);
+ 	INIT_LIST_HEAD(&mm->mmlist);
+ 	mm->flags = (current->mm) ?
+ 		(current->mm->flags & MMF_INIT_MASK) : default_dump_filter;
+@@ -582,20 +540,16 @@
+ 	mm->nr_ptes = 0;
+ 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
+ 	spin_lock_init(&mm->page_table_lock);
+ 	mm->free_area_cache = TASK_UNMAPPED_BASE;
+ 	mm->cached_hole_size = ~0UL;
+ 	mm_init_aio(mm);
+ 	mm_init_owner(mm, p);
+ 
+-#ifdef CONFIG_MM_MODULES
+-	mm_modules_init(mm);
+-#endif /* CONFIG_MM_MODULES */
+-
+ 	if (likely(!mm_alloc_pgd(mm))) {
+ 		mm->def_flags = 0;
+ 		mmu_notifier_mm_init(mm);
+ 		return mm;
+ 	}
+ 
+ 	free_mm(mm);
+ 	return NULL;
+@@ -657,19 +611,16 @@
+ {
+ 	might_sleep();
+ 
+ 	if (atomic_dec_and_test(&mm->mm_users)) {
+ 		uprobe_clear_state(mm);
+ 		exit_aio(mm);
+ 		ksm_exit(mm);
+ 		khugepaged_exit(mm); /* must run before exit_mmap */
+-#ifdef CONFIG_MM_MODULES
+- 		mm_modules_exit(mm);
+-#endif /* CONFIG_MM_MODULES */
+ 		exit_mmap(mm);
+ 		set_mm_exe_file(mm, NULL);
+ 		if (!list_empty(&mm->mmlist)) {
+ 			spin_lock(&mmlist_lock);
+ 			list_del(&mm->mmlist);
+ 			spin_unlock(&mmlist_lock);
+ 		}
+ 		if (mm->binfmt)
+diff -Nau8r ./linux-mri/mm/Kconfig ./linux-3.10.5/mm/Kconfig
+--- ./linux-mri/mm/Kconfig	2013-08-18 16:02:26.250289001 -0700
++++ ./linux-3.10.5/mm/Kconfig	2013-08-04 01:51:49.000000000 -0700
+@@ -126,30 +126,16 @@
+ 	help
+ 	 SPARSEMEM_VMEMMAP uses a virtually mapped memmap to optimise
+ 	 pfn_to_page and page_to_pfn operations.  This is the most
+ 	 efficient option when sufficient kernel resources are available.
+ 
+ config HAVE_MEMBLOCK
+ 	boolean
+ 
+-config MM_MODULES
+-	bool "Memory Management Modules"
+-	depends on MMU_NOTIFIER
+-	default y
+-	help
+-	 Provides support for dynamically loadable memory management modules
+-
+-config PMEM_MODULES
+-	bool "Physical Memory Management Modules"
+-	default y
+-	help
+-	 Provides support for dynamically loadable physical memory
+-	 management modules
+-
+ config HAVE_MEMBLOCK_NODE_MAP
+ 	boolean
+ 
+ config ARCH_DISCARD_MEMBLOCK
+ 	boolean
+ 
+ config NO_BOOTMEM
+ 	boolean
+diff -Nau8r ./linux-mri/mm/Makefile ./linux-3.10.5/mm/Makefile
+--- ./linux-mri/mm/Makefile	2013-08-18 16:03:11.026063924 -0700
++++ ./linux-3.10.5/mm/Makefile	2013-08-04 01:51:49.000000000 -0700
+@@ -51,11 +51,10 @@
+ obj-$(CONFIG_QUICKLIST) += quicklist.o
+ obj-$(CONFIG_TRANSPARENT_HUGEPAGE) += huge_memory.o
+ obj-$(CONFIG_MEMCG) += memcontrol.o page_cgroup.o vmpressure.o
+ obj-$(CONFIG_CGROUP_HUGETLB) += hugetlb_cgroup.o
+ obj-$(CONFIG_MEMORY_FAILURE) += memory-failure.o
+ obj-$(CONFIG_HWPOISON_INJECT) += hwpoison-inject.o
+ obj-$(CONFIG_DEBUG_KMEMLEAK) += kmemleak.o
+ obj-$(CONFIG_DEBUG_KMEMLEAK_TEST) += kmemleak-test.o
+-obj-$(CONFIG_MM_MODULES) += mm_module_exports.o
+ obj-$(CONFIG_CLEANCACHE) += cleancache.o
+ obj-$(CONFIG_MEMORY_ISOLATION) += page_isolation.o
+diff -Nau8r ./linux-mri/mm/memory.c ./linux-3.10.5/mm/memory.c
+--- ./linux-mri/mm/memory.c	2013-08-18 16:49:46.457416545 -0700
++++ ./linux-3.10.5/mm/memory.c	2013-08-04 01:51:49.000000000 -0700
+@@ -68,22 +68,16 @@
+ #include <asm/pgtable.h>
+ 
+ #include "internal.h"
+ 
+ #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
+ #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_nid.
+ #endif
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-struct pmem_module_struct *pmem_modules = NULL;
+-EXPORT_SYMBOL_GPL(pmem_modules);
+-EXPORT_SYMBOL_GPL(ptep_clear_flush);
+-#endif
+-
+ #ifndef CONFIG_NEED_MULTIPLE_NODES
+ /* use the per-pgdat data instead for discontigmem - mbligh */
+ unsigned long max_mapnr;
+ struct page *mem_map;
+ 
+ EXPORT_SYMBOL(max_mapnr);
+ EXPORT_SYMBOL(mem_map);
+ #endif
+@@ -556,35 +550,24 @@
+ 
+ 		/*
+ 		 * Hide vma from rmap and truncate_pagecache before freeing
+ 		 * pgtables
+ 		 */
+ 		unlink_anon_vmas(vma);
+ 		unlink_file_vma(vma);
+ 
+-#ifdef CONFIG_MM_MODULES
+-		if (vma->mm_module_ops) {
+-			BUG_ON(!vma->mm_module_ops->free_pgd_range);
+-			vma->mm_module_ops->free_pgd_range(tlb, addr,
+-					vma->vm_end, floor,
+-					next? next->vm_start: ceiling);
+-		} else 
+-#endif /* CONFIG_MM_MODULES */
+ 		if (is_vm_hugetlb_page(vma)) {
+ 			hugetlb_free_pgd_range(tlb, addr, vma->vm_end,
+ 				floor, next? next->vm_start: ceiling);
+ 		} else {
+ 			/*
+ 			 * Optimization: gather nearby vmas into one call down
+ 			 */
+ 			while (next && next->vm_start <= vma->vm_end + PMD_SIZE
+-#ifdef CONFIG_MM_MODULES
+-				&& !next->mm_module_ops
+-#endif /* CONFIG_MM_MODULES */
+ 			       && !is_vm_hugetlb_page(next)) {
+ 				vma = next;
+ 				next = vma->vm_next;
+ 				unlink_anon_vmas(vma);
+ 				unlink_file_vma(vma);
+ 			}
+ 			free_pgd_range(tlb, addr, vma->vm_end,
+ 				floor, next? next->vm_start: ceiling);
+@@ -1051,23 +1034,16 @@
+ 	int ret;
+ 
+ 	/*
+ 	 * Don't copy ptes where a page fault will fill them correctly.
+ 	 * Fork becomes much lighter when there are big shared or private
+ 	 * readonly mappings. The tradeoff is that copy_page_range is more
+ 	 * efficient than faulting.
+ 	 */
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops) {
+-		BUG_ON(!vma->mm_module_ops->copy_page_range);
+-		return vma->mm_module_ops->copy_page_range(dst_mm, src_mm, vma);
+-	}
+-#endif
+-
+ 	if (!(vma->vm_flags & (VM_HUGETLB | VM_NONLINEAR |
+ 			       VM_PFNMAP | VM_MIXEDMAP))) {
+ 		if (!vma->anon_vma)
+ 			return 0;
+ 	}
+ 
+ 	if (is_vm_hugetlb_page(vma))
+ 		return copy_hugetlb_page_range(dst_mm, src_mm, vma);
+@@ -1348,23 +1324,16 @@
+ 		return;
+ 
+ 	if (vma->vm_file)
+ 		uprobe_munmap(vma, start, end);
+ 
+ 	if (unlikely(vma->vm_flags & VM_PFNMAP))
+ 		untrack_pfn(vma, 0, 0);
+ 
+-#ifdef CONFIG_MM_MODULES
+-			if (unlikely(vma->mm_module_ops)) {
+-				BUG_ON(!vma->mm_module_ops->unmap_page_range);
+-				start = vma->mm_module_ops->unmap_page_range(
+-							tlb, vma, start, end, details);
+-			} else
+-#endif
+ 	if (start != end) {
+ 		if (unlikely(is_vm_hugetlb_page(vma))) {
+ 			/*
+ 			 * It is undesirable to test vma->vm_file as it
+ 			 * should be non-null for valid hugetlb area.
+ 			 * However, vm_file will be NULL in the error
+ 			 * cleanup path of do_mmap_pgoff. When
+ 			 * hugetlbfs ->mmap method fails,
+@@ -1813,25 +1782,16 @@
+ 			goto next_page;
+ 		}
+ 
+ 		if (!vma ||
+ 		    (vma->vm_flags & (VM_IO | VM_PFNMAP)) ||
+ 		    !(vm_flags & vma->vm_flags))
+ 			return i ? : -EFAULT;
+ 
+-#ifdef CONFIG_MM_MODULES
+-		if (vma->mm_module_ops) {
+-			BUG_ON(!vma->mm_module_ops->follow_page);
+-			i = vma->mm_module_ops->follow_page(mm, vma, pages,
+-					vmas, &start, &nr_pages, i, gup_flags);
+-			continue;
+-		}
+-#endif
+-
+ 		if (is_vm_hugetlb_page(vma)) {
+ 			i = follow_hugetlb_page(mm, vma, pages, vmas,
+ 					&start, &nr_pages, i, gup_flags);
+ 			continue;
+ 		}
+ 
+ 		do {
+ 			struct page *page;
+@@ -3805,24 +3765,16 @@
+ 	__set_current_state(TASK_RUNNING);
+ 
+ 	count_vm_event(PGFAULT);
+ 	mem_cgroup_count_vm_event(mm, PGFAULT);
+ 
+ 	/* do counter updates before entering really critical section. */
+ 	check_sync_rss_stat(current);
+ 
+-#ifdef CONFIG_MM_MODULES
+-	if (unlikely(vma->mm_module_ops)) {
+-		BUG_ON(!vma->mm_module_ops->handle_mm_fault);
+-		return vma->mm_module_ops->handle_mm_fault(mm, vma,
+-				address, flags);
+-	}
+-#endif /* CONFIG_MM_MODULES */
+-
+ 	if (unlikely(is_vm_hugetlb_page(vma)))
+ 		return hugetlb_fault(mm, vma, address, flags);
+ 
+ retry:
+ 	pgd = pgd_offset(mm, address);
+ 	pud = pud_alloc(mm, pgd, address);
+ 	if (!pud)
+ 		return VM_FAULT_OOM;
+diff -Nau8r ./linux-mri/mm/mempolicy.c ./linux-3.10.5/mm/mempolicy.c
+--- ./linux-mri/mm/mempolicy.c	2013-08-18 16:09:20.792279925 -0700
++++ ./linux-3.10.5/mm/mempolicy.c	2013-08-04 01:51:49.000000000 -0700
+@@ -633,19 +633,16 @@
+ 				return ERR_PTR(-EFAULT);
+ 			if (prev && prev->vm_end < vma->vm_start)
+ 				return ERR_PTR(-EFAULT);
+ 		}
+ 
+ 		if (is_vm_hugetlb_page(vma))
+ 			goto next;
+ 
+-        if (!vma->mm_module_ops)
+-            goto next;
+-
+ 		if (flags & MPOL_MF_LAZY) {
+ 			change_prot_numa(vma, start, endvma);
+ 			goto next;
+ 		}
+ 
+ 		if ((flags & MPOL_MF_STRICT) ||
+ 		     ((flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)) &&
+ 		      vma_migratable(vma))) {
+diff -Nau8r ./linux-mri/mm/mlock.c ./linux-3.10.5/mm/mlock.c
+--- ./linux-mri/mm/mlock.c	2013-08-18 16:16:05.674444503 -0700
++++ ./linux-3.10.5/mm/mlock.c	2013-08-04 01:51:49.000000000 -0700
+@@ -277,21 +277,17 @@
+ {
+ 	struct mm_struct *mm = vma->vm_mm;
+ 	pgoff_t pgoff;
+ 	int nr_pages;
+ 	int ret = 0;
+ 	int lock = !!(newflags & VM_LOCKED);
+ 
+ 	if (newflags == vma->vm_flags || (vma->vm_flags & VM_SPECIAL) ||
+-	    is_vm_hugetlb_page(vma) ||
+-#ifdef CONFIG_MM_MODULES
+-        (vma->mm_modules_ops) ||
+-#endif
+-        vma == get_gate_vma(current->mm))
++	    is_vm_hugetlb_page(vma) || vma == get_gate_vma(current->mm))
+ 		goto out;	/* don't set VM_LOCKED,  don't count */
+ 
+ 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
+ 	*prev = vma_merge(mm, *prev, start, end, newflags, vma->anon_vma,
+ 			  vma->vm_file, pgoff, vma_policy(vma));
+ 	if (*prev) {
+ 		vma = *prev;
+ 		goto success;
+diff -Nau8r ./linux-mri/mm/mm_module_exports.c ./linux-3.10.5/mm/mm_module_exports.c
+--- ./linux-mri/mm/mm_module_exports.c	2013-08-18 16:16:19.226384707 -0700
++++ ./linux-3.10.5/mm/mm_module_exports.c	1969-12-31 16:00:00.000000000 -0800
+@@ -1,100 +0,0 @@
+-
+-#include <linux/module.h>
+-
+-#include <linux/errno.h>
+-#include <linux/mm.h>
+-#include <linux/elf.h>
+-#include <asm/pgtable.h>
+-
+-/* arch/x86/kernel/tlb_64.c */
+-extern void flush_tlb_page(struct vm_area_struct *vma, unsigned long va);
+-EXPORT_SYMBOL_GPL(flush_tlb_page);
+-extern void flush_tlb_mm(struct mm_struct *);
+-EXPORT_SYMBOL_GPL(flush_tlb_mm);
+-
+-/* arch/x86/mm/pgtable.c */
+-extern void ___pud_free_tlb(struct mmu_gather *, pud_t *);
+-extern void ___pmd_free_tlb(struct mmu_gather *, pmd_t *);
+-EXPORT_SYMBOL_GPL(___pud_free_tlb);
+-EXPORT_SYMBOL_GPL(___pmd_free_tlb);
+-
+-/* XXX Not sure how the heck _this_ is supposed to get set when building a KO... */
+-#ifndef __PAGETABLE_PUD_FOLDED
+-extern int __pud_alloc(struct mm_struct *, pgd_t *, unsigned long);
+-EXPORT_SYMBOL_GPL(__pud_alloc);
+-#endif
+-
+-/* mm/swap.c */
+-extern void lru_add_drain(void);
+-EXPORT_SYMBOL_GPL(lru_add_drain);
+-
+-/* mm/memory.c */
+-extern void pgd_clear_bad(pgd_t *);
+-EXPORT_SYMBOL_GPL(pgd_clear_bad);
+-extern void pud_clear_bad(pud_t *);
+-EXPORT_SYMBOL_GPL(pud_clear_bad);
+-struct page *vm_normal_page(struct vm_area_struct *, unsigned long, pte_t pte);
+-EXPORT_SYMBOL_GPL(vm_normal_page);
+-extern int __pmd_alloc(struct mm_struct *, pud_t *, unsigned long);
+-EXPORT_SYMBOL_GPL(__pmd_alloc);
+-extern void pmd_clear_bad(pmd_t *);
+-EXPORT_SYMBOL_GPL(pmd_clear_bad);
+-#if defined(SPLIT_RSS_COUNTING)
+-extern unsigned long get_mm_counter(struct mm_struct *mm, int member);
+-EXPORT_SYMBOL_GPL(get_mm_counter);
+-#endif /* defined(SPLIT_RSS_COUNTING) */
+-
+-/* mm/swap_state.c */
+-extern void free_pages_and_swap_cache(struct page **, int);
+-EXPORT_SYMBOL_GPL(free_pages_and_swap_cache);
+-
+-#ifdef CONFIG_MMU_NOTIFIER
+-/* mm/mmu_notifier.c */
+-extern void __mmu_notifier_invalidate_range_start(struct mm_struct *,
+-		unsigned long, unsigned long);
+-EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_start);
+-extern void __mmu_notifier_invalidate_range_end(struct mm_struct *,
+-		unsigned long, unsigned long);
+-EXPORT_SYMBOL_GPL(__mmu_notifier_invalidate_range_end);
+-#endif /* CONFIG_MMU_NOTIFIER */
+-
+-/* mm/rmap.c */
+-extern int anon_vma_prepare(struct vm_area_struct *);
+-EXPORT_SYMBOL_GPL(anon_vma_prepare);
+-
+-/* mm/bootmem.c */
+-extern unsigned long max_pfn;
+-EXPORT_SYMBOL_GPL(max_pfn);
+-
+-#ifdef CONFIG_SPARSEMEM_VMEMMAP
+-/* arch/x86/mm/init_64.c */
+-extern int vmemmap_populate(struct page *, unsigned long, int);
+-EXPORT_SYMBOL_GPL(vmemmap_populate);
+-#endif
+-
+-#if 1
+-/* WTF? */
+-/* arch/x86/mm/init.c */
+-extern struct mmu_gather mmu_gathers;
+-EXPORT_SYMBOL_GPL(mmu_gathers);
+-#endif
+-
+-/* kernel/fork.c */
+-extern void __put_task_struct(struct task_struct *);
+-EXPORT_SYMBOL_GPL(__put_task_struct);
+-extern rwlock_t tasklist_lock;
+-EXPORT_SYMBOL_GPL(tasklist_lock);
+-
+-/* kernel/pid.c */
+-enum pid_type;
+-extern struct task_struct *get_pid_task(struct pid *, enum pid_type);
+-EXPORT_SYMBOL_GPL(get_pid_task);
+-extern struct task_struct *find_task_by_vpid(pid_t vnr);
+-EXPORT_SYMBOL_GPL(find_task_by_vpid);
+-
+-/* arch/x86/kernel/init_task.c */
+-extern struct mm_struct init_mm;
+-EXPORT_SYMBOL_GPL(init_mm); /* will be removed in 2.6.26 */
+-
+-/* mm/mmap.c */
+-EXPORT_SYMBOL_GPL(split_vma);
+diff -Nau8r ./linux-mri/mm/mmap.c ./linux-3.10.5/mm/mmap.c
+--- ./linux-mri/mm/mmap.c	2013-08-18 16:19:20.113594903 -0700
++++ ./linux-3.10.5/mm/mmap.c	2013-08-04 01:51:49.000000000 -0700
+@@ -246,22 +246,16 @@
+ {
+ 	struct vm_area_struct *next = vma->vm_next;
+ 
+ 	might_sleep();
+ 	if (vma->vm_ops && vma->vm_ops->close)
+ 		vma->vm_ops->close(vma);
+ 	if (vma->vm_file)
+ 		fput(vma->vm_file);
+-#ifdef CONFIG_MM_MODULES
+-    if (vma->mm_module_ops) {
+-        BUG_ON(!vma->mm_module_ops->exit_module_vma);
+-        vma->mm_module_ops->exit_module_vma(vma);
+-    }
+-#endif
+ 	mpol_put(vma_policy(vma));
+ 	kmem_cache_free(vm_area_cachep, vma);
+ 	return next;
+ }
+ 
+ static unsigned long do_brk(unsigned long addr, unsigned long len);
+ 
+ SYSCALL_DEFINE1(brk, unsigned long, brk)
+@@ -902,20 +896,16 @@
+ 			struct file *file, unsigned long vm_flags)
+ {
+ 	if (vma->vm_flags ^ vm_flags)
+ 		return 0;
+ 	if (vma->vm_file != file)
+ 		return 0;
+ 	if (vma->vm_ops && vma->vm_ops->close)
+ 		return 0;
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops)
+-		return 0;
+-#endif
+ 	return 1;
+ }
+ 
+ static inline int is_mergeable_anon_vma(struct anon_vma *anon_vma1,
+ 					struct anon_vma *anon_vma2,
+ 					struct vm_area_struct *vma)
+ {
+ 	/*
+@@ -2415,21 +2405,16 @@
+  */
+ static int __split_vma(struct mm_struct * mm, struct vm_area_struct * vma,
+ 	      unsigned long addr, int new_below)
+ {
+ 	struct mempolicy *pol;
+ 	struct vm_area_struct *new;
+ 	int err = -ENOMEM;
+ 
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops)
+-		return -EINVAL;
+-#endif /* CONFIG_MM_MODULES */
+-
+ 	if (is_vm_hugetlb_page(vma) && (addr &
+ 					~(huge_page_mask(hstate_vma(vma)))))
+ 		return -EINVAL;
+ 
+ 	new = kmem_cache_alloc(vm_area_cachep, GFP_KERNEL);
+ 	if (!new)
+ 		goto out_err;
+ 
+diff -Nau8r ./linux-mri/mm/mprotect.c ./linux-3.10.5/mm/mprotect.c
+--- ./linux-mri/mm/mprotect.c	2013-08-18 16:19:31.177547065 -0700
++++ ./linux-3.10.5/mm/mprotect.c	2013-08-04 01:51:49.000000000 -0700
+@@ -286,31 +286,16 @@
+ 	}
+ 
+ 	if (end != vma->vm_end) {
+ 		error = split_vma(mm, vma, end, 0);
+ 		if (error)
+ 			goto fail;
+ 	}
+ 
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops) {
+-		BUG_ON(!vma->mm_module_ops->change_protection);
+-		error = vma->mm_module_ops->change_protection(vma, start,
+-				end, newflags);
+-		if (error)
+-			goto fail;
+-		/* mm_module_ops->change_protection is responsible for
+-		 * vma flags, vm_page_prot, all pte settings, mmu_notifier, 
+-		 * and vm_stat accounting. When it comes back, we're done.
+-		 */
+-		return 0;
+-	} 
+-#endif /* CONFIG_MM_MODULES */
+-
+ success:
+ 	/*
+ 	 * vm_flags and vm_page_prot are protected by the mmap_sem
+ 	 * held in write mode.
+ 	 */
+ 	vma->vm_flags = newflags;
+ 	vma->vm_page_prot = pgprot_modify(vma->vm_page_prot,
+ 					  vm_get_page_prot(newflags));
+diff -Nau8r ./linux-mri/mm/mprotect.c.orig ./linux-3.10.5/mm/mprotect.c.orig
+--- ./linux-mri/mm/mprotect.c.orig	2013-08-18 13:50:24.081427372 -0700
++++ ./linux-3.10.5/mm/mprotect.c.orig	1969-12-31 16:00:00.000000000 -0800
+@@ -1,419 +0,0 @@
+-/*
+- *  mm/mprotect.c
+- *
+- *  (C) Copyright 1994 Linus Torvalds
+- *  (C) Copyright 2002 Christoph Hellwig
+- *
+- *  Address space accounting code	<alan@lxorguk.ukuu.org.uk>
+- *  (C) Copyright 2002 Red Hat Inc, All Rights Reserved
+- */
+-
+-#include <linux/mm.h>
+-#include <linux/hugetlb.h>
+-#include <linux/shm.h>
+-#include <linux/mman.h>
+-#include <linux/fs.h>
+-#include <linux/highmem.h>
+-#include <linux/security.h>
+-#include <linux/mempolicy.h>
+-#include <linux/personality.h>
+-#include <linux/syscalls.h>
+-#include <linux/swap.h>
+-#include <linux/swapops.h>
+-#include <linux/mmu_notifier.h>
+-#include <linux/migrate.h>
+-#include <linux/perf_event.h>
+-#include <asm/uaccess.h>
+-#include <asm/pgtable.h>
+-#include <asm/cacheflush.h>
+-#include <asm/tlbflush.h>
+-
+-#ifndef pgprot_modify
+-static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
+-{
+-	return newprot;
+-}
+-#endif
+-
+-static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
+-		unsigned long addr, unsigned long end, pgprot_t newprot,
+-		int dirty_accountable, int prot_numa, bool *ret_all_same_node)
+-{
+-	struct mm_struct *mm = vma->vm_mm;
+-	pte_t *pte, oldpte;
+-	spinlock_t *ptl;
+-	unsigned long pages = 0;
+-	bool all_same_node = true;
+-	int last_nid = -1;
+-
+-	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+-	arch_enter_lazy_mmu_mode();
+-	do {
+-		oldpte = *pte;
+-		if (pte_present(oldpte)) {
+-			pte_t ptent;
+-			bool updated = false;
+-
+-			ptent = ptep_modify_prot_start(mm, addr, pte);
+-			if (!prot_numa) {
+-				ptent = pte_modify(ptent, newprot);
+-				updated = true;
+-			} else {
+-				struct page *page;
+-
+-				page = vm_normal_page(vma, addr, oldpte);
+-				if (page) {
+-					int this_nid = page_to_nid(page);
+-					if (last_nid == -1)
+-						last_nid = this_nid;
+-					if (last_nid != this_nid)
+-						all_same_node = false;
+-
+-					/* only check non-shared pages */
+-					if (!pte_numa(oldpte) &&
+-					    page_mapcount(page) == 1) {
+-						ptent = pte_mknuma(ptent);
+-						updated = true;
+-					}
+-				}
+-			}
+-
+-			/*
+-			 * Avoid taking write faults for pages we know to be
+-			 * dirty.
+-			 */
+-			if (dirty_accountable && pte_dirty(ptent)) {
+-				ptent = pte_mkwrite(ptent);
+-				updated = true;
+-			}
+-
+-			if (updated)
+-				pages++;
+-			ptep_modify_prot_commit(mm, addr, pte, ptent);
+-		} else if (IS_ENABLED(CONFIG_MIGRATION) && !pte_file(oldpte)) {
+-			swp_entry_t entry = pte_to_swp_entry(oldpte);
+-
+-			if (is_write_migration_entry(entry)) {
+-				/*
+-				 * A protection check is difficult so
+-				 * just be safe and disable write
+-				 */
+-				make_migration_entry_read(&entry);
+-				set_pte_at(mm, addr, pte,
+-					swp_entry_to_pte(entry));
+-			}
+-			pages++;
+-		}
+-	} while (pte++, addr += PAGE_SIZE, addr != end);
+-	arch_leave_lazy_mmu_mode();
+-	pte_unmap_unlock(pte - 1, ptl);
+-
+-	*ret_all_same_node = all_same_node;
+-	return pages;
+-}
+-
+-#ifdef CONFIG_NUMA_BALANCING
+-static inline void change_pmd_protnuma(struct mm_struct *mm, unsigned long addr,
+-				       pmd_t *pmd)
+-{
+-	spin_lock(&mm->page_table_lock);
+-	set_pmd_at(mm, addr & PMD_MASK, pmd, pmd_mknuma(*pmd));
+-	spin_unlock(&mm->page_table_lock);
+-}
+-#else
+-static inline void change_pmd_protnuma(struct mm_struct *mm, unsigned long addr,
+-				       pmd_t *pmd)
+-{
+-	BUG();
+-}
+-#endif /* CONFIG_NUMA_BALANCING */
+-
+-static inline unsigned long change_pmd_range(struct vm_area_struct *vma,
+-		pud_t *pud, unsigned long addr, unsigned long end,
+-		pgprot_t newprot, int dirty_accountable, int prot_numa)
+-{
+-	pmd_t *pmd;
+-	unsigned long next;
+-	unsigned long pages = 0;
+-	bool all_same_node;
+-
+-	pmd = pmd_offset(pud, addr);
+-	do {
+-		next = pmd_addr_end(addr, end);
+-		if (pmd_trans_huge(*pmd)) {
+-			if (next - addr != HPAGE_PMD_SIZE)
+-				split_huge_page_pmd(vma, addr, pmd);
+-			else if (change_huge_pmd(vma, pmd, addr, newprot,
+-						 prot_numa)) {
+-				pages += HPAGE_PMD_NR;
+-				continue;
+-			}
+-			/* fall through */
+-		}
+-		if (pmd_none_or_clear_bad(pmd))
+-			continue;
+-		pages += change_pte_range(vma, pmd, addr, next, newprot,
+-				 dirty_accountable, prot_numa, &all_same_node);
+-
+-		/*
+-		 * If we are changing protections for NUMA hinting faults then
+-		 * set pmd_numa if the examined pages were all on the same
+-		 * node. This allows a regular PMD to be handled as one fault
+-		 * and effectively batches the taking of the PTL
+-		 */
+-		if (prot_numa && all_same_node)
+-			change_pmd_protnuma(vma->vm_mm, addr, pmd);
+-	} while (pmd++, addr = next, addr != end);
+-
+-	return pages;
+-}
+-
+-static inline unsigned long change_pud_range(struct vm_area_struct *vma,
+-		pgd_t *pgd, unsigned long addr, unsigned long end,
+-		pgprot_t newprot, int dirty_accountable, int prot_numa)
+-{
+-	pud_t *pud;
+-	unsigned long next;
+-	unsigned long pages = 0;
+-
+-	pud = pud_offset(pgd, addr);
+-	do {
+-		next = pud_addr_end(addr, end);
+-		if (pud_none_or_clear_bad(pud))
+-			continue;
+-		pages += change_pmd_range(vma, pud, addr, next, newprot,
+-				 dirty_accountable, prot_numa);
+-	} while (pud++, addr = next, addr != end);
+-
+-	return pages;
+-}
+-
+-static unsigned long change_protection_range(struct vm_area_struct *vma,
+-		unsigned long addr, unsigned long end, pgprot_t newprot,
+-		int dirty_accountable, int prot_numa)
+-{
+-	struct mm_struct *mm = vma->vm_mm;
+-	pgd_t *pgd;
+-	unsigned long next;
+-	unsigned long start = addr;
+-	unsigned long pages = 0;
+-
+-	BUG_ON(addr >= end);
+-	pgd = pgd_offset(mm, addr);
+-	flush_cache_range(vma, addr, end);
+-	do {
+-		next = pgd_addr_end(addr, end);
+-		if (pgd_none_or_clear_bad(pgd))
+-			continue;
+-		pages += change_pud_range(vma, pgd, addr, next, newprot,
+-				 dirty_accountable, prot_numa);
+-	} while (pgd++, addr = next, addr != end);
+-
+-	/* Only flush the TLB if we actually modified any entries: */
+-	if (pages)
+-		flush_tlb_range(vma, start, end);
+-
+-	return pages;
+-}
+-
+-unsigned long change_protection(struct vm_area_struct *vma, unsigned long start,
+-		       unsigned long end, pgprot_t newprot,
+-		       int dirty_accountable, int prot_numa)
+-{
+-	struct mm_struct *mm = vma->vm_mm;
+-	unsigned long pages;
+-
+-	mmu_notifier_invalidate_range_start(mm, start, end);
+-	if (is_vm_hugetlb_page(vma))
+-		pages = hugetlb_change_protection(vma, start, end, newprot);
+-	else
+-		pages = change_protection_range(vma, start, end, newprot, dirty_accountable, prot_numa);
+-	mmu_notifier_invalidate_range_end(mm, start, end);
+-
+-	return pages;
+-}
+-
+-int
+-mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
+-	unsigned long start, unsigned long end, unsigned long newflags)
+-{
+-	struct mm_struct *mm = vma->vm_mm;
+-	unsigned long oldflags = vma->vm_flags;
+-	long nrpages = (end - start) >> PAGE_SHIFT;
+-	unsigned long charged = 0;
+-	pgoff_t pgoff;
+-	int error;
+-	int dirty_accountable = 0;
+-
+-	if (newflags == oldflags) {
+-		*pprev = vma;
+-		return 0;
+-	}
+-
+-	/*
+-	 * If we make a private mapping writable we increase our commit;
+-	 * but (without finer accounting) cannot reduce our commit if we
+-	 * make it unwritable again. hugetlb mapping were accounted for
+-	 * even if read-only so there is no need to account for them here
+-	 */
+-	if (newflags & VM_WRITE) {
+-		if (!(oldflags & (VM_ACCOUNT|VM_WRITE|VM_HUGETLB|
+-						VM_SHARED|VM_NORESERVE))) {
+-			charged = nrpages;
+-			if (security_vm_enough_memory_mm(mm, charged))
+-				return -ENOMEM;
+-			newflags |= VM_ACCOUNT;
+-		}
+-	}
+-
+-	/*
+-	 * First try to merge with previous and/or next vma.
+-	 */
+-	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
+-	*pprev = vma_merge(mm, *pprev, start, end, newflags,
+-			vma->anon_vma, vma->vm_file, pgoff, vma_policy(vma));
+-	if (*pprev) {
+-		vma = *pprev;
+-		goto success;
+-	}
+-
+-	*pprev = vma;
+-
+-	if (start != vma->vm_start) {
+-		error = split_vma(mm, vma, start, 1);
+-		if (error)
+-			goto fail;
+-	}
+-
+-	if (end != vma->vm_end) {
+-		error = split_vma(mm, vma, end, 0);
+-		if (error)
+-			goto fail;
+-	}
+-
+-success:
+-	/*
+-	 * vm_flags and vm_page_prot are protected by the mmap_sem
+-	 * held in write mode.
+-	 */
+-	vma->vm_flags = newflags;
+-	vma->vm_page_prot = pgprot_modify(vma->vm_page_prot,
+-					  vm_get_page_prot(newflags));
+-
+-	if (vma_wants_writenotify(vma)) {
+-		vma->vm_page_prot = vm_get_page_prot(newflags & ~VM_SHARED);
+-		dirty_accountable = 1;
+-	}
+-
+-	change_protection(vma, start, end, vma->vm_page_prot,
+-			  dirty_accountable, 0);
+-
+-	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
+-	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
+-	perf_event_mmap(vma);
+-	return 0;
+-
+-fail:
+-	vm_unacct_memory(charged);
+-	return error;
+-}
+-
+-SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
+-		unsigned long, prot)
+-{
+-	unsigned long vm_flags, nstart, end, tmp, reqprot;
+-	struct vm_area_struct *vma, *prev;
+-	int error = -EINVAL;
+-	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
+-	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
+-	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
+-		return -EINVAL;
+-
+-	if (start & ~PAGE_MASK)
+-		return -EINVAL;
+-	if (!len)
+-		return 0;
+-	len = PAGE_ALIGN(len);
+-	end = start + len;
+-	if (end <= start)
+-		return -ENOMEM;
+-	if (!arch_validate_prot(prot))
+-		return -EINVAL;
+-
+-	reqprot = prot;
+-	/*
+-	 * Does the application expect PROT_READ to imply PROT_EXEC:
+-	 */
+-	if ((prot & PROT_READ) && (current->personality & READ_IMPLIES_EXEC))
+-		prot |= PROT_EXEC;
+-
+-	vm_flags = calc_vm_prot_bits(prot);
+-
+-	down_write(&current->mm->mmap_sem);
+-
+-	vma = find_vma(current->mm, start);
+-	error = -ENOMEM;
+-	if (!vma)
+-		goto out;
+-	prev = vma->vm_prev;
+-	if (unlikely(grows & PROT_GROWSDOWN)) {
+-		if (vma->vm_start >= end)
+-			goto out;
+-		start = vma->vm_start;
+-		error = -EINVAL;
+-		if (!(vma->vm_flags & VM_GROWSDOWN))
+-			goto out;
+-	} else {
+-		if (vma->vm_start > start)
+-			goto out;
+-		if (unlikely(grows & PROT_GROWSUP)) {
+-			end = vma->vm_end;
+-			error = -EINVAL;
+-			if (!(vma->vm_flags & VM_GROWSUP))
+-				goto out;
+-		}
+-	}
+-	if (start > vma->vm_start)
+-		prev = vma;
+-
+-	for (nstart = start ; ; ) {
+-		unsigned long newflags;
+-
+-		/* Here we know that vma->vm_start <= nstart < vma->vm_end. */
+-
+-		newflags = vm_flags;
+-		newflags |= (vma->vm_flags & ~(VM_READ | VM_WRITE | VM_EXEC));
+-
+-		/* newflags >> 4 shift VM_MAY% in place of VM_% */
+-		if ((newflags & ~(newflags >> 4)) & (VM_READ | VM_WRITE | VM_EXEC)) {
+-			error = -EACCES;
+-			goto out;
+-		}
+-
+-		error = security_file_mprotect(vma, reqprot, prot);
+-		if (error)
+-			goto out;
+-
+-		tmp = vma->vm_end;
+-		if (tmp > end)
+-			tmp = end;
+-		error = mprotect_fixup(vma, &prev, nstart, tmp, newflags);
+-		if (error)
+-			goto out;
+-		nstart = tmp;
+-
+-		if (nstart < prev->vm_end)
+-			nstart = prev->vm_end;
+-		if (nstart >= end)
+-			goto out;
+-
+-		vma = prev->vm_next;
+-		if (!vma || vma->vm_start != nstart) {
+-			error = -ENOMEM;
+-			goto out;
+-		}
+-	}
+-out:
+-	up_write(&current->mm->mmap_sem);
+-	return error;
+-}
+diff -Nau8r ./linux-mri/mm/mremap.c ./linux-3.10.5/mm/mremap.c
+--- ./linux-mri/mm/mremap.c	2013-08-18 16:19:41.457502662 -0700
++++ ./linux-3.10.5/mm/mremap.c	2013-08-04 01:51:49.000000000 -0700
+@@ -310,21 +310,16 @@
+ 	unsigned long old_len, unsigned long new_len, unsigned long *p)
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	struct vm_area_struct *vma = find_vma(mm, addr);
+ 
+ 	if (!vma || vma->vm_start > addr)
+ 		goto Efault;
+ 
+-#ifdef CONFIG_MM_MODULES
+-	if (vma->mm_module_ops)
+-		goto Einval;
+-#endif /* CONFIG_MM_MODULES */
+-
+ 	if (is_vm_hugetlb_page(vma))
+ 		goto Einval;
+ 
+ 	/* We can't remap across vm area boundaries */
+ 	if (old_len > vma->vm_end - addr)
+ 		goto Efault;
+ 
+ 	/* Need to be careful about a growing mapping */
+diff -Nau8r ./linux-mri/mm/mremap.c.orig ./linux-3.10.5/mm/mremap.c.orig
+--- ./linux-mri/mm/mremap.c.orig	2013-08-18 13:50:23.861428192 -0700
++++ ./linux-3.10.5/mm/mremap.c.orig	1969-12-31 16:00:00.000000000 -0800
+@@ -1,559 +0,0 @@
+-/*
+- *	mm/mremap.c
+- *
+- *	(C) Copyright 1996 Linus Torvalds
+- *
+- *	Address space accounting code	<alan@lxorguk.ukuu.org.uk>
+- *	(C) Copyright 2002 Red Hat Inc, All Rights Reserved
+- */
+-
+-#include <linux/mm.h>
+-#include <linux/hugetlb.h>
+-#include <linux/shm.h>
+-#include <linux/ksm.h>
+-#include <linux/mman.h>
+-#include <linux/swap.h>
+-#include <linux/capability.h>
+-#include <linux/fs.h>
+-#include <linux/highmem.h>
+-#include <linux/security.h>
+-#include <linux/syscalls.h>
+-#include <linux/mmu_notifier.h>
+-#include <linux/sched/sysctl.h>
+-
+-#include <asm/uaccess.h>
+-#include <asm/cacheflush.h>
+-#include <asm/tlbflush.h>
+-
+-#include "internal.h"
+-
+-static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
+-{
+-	pgd_t *pgd;
+-	pud_t *pud;
+-	pmd_t *pmd;
+-
+-	pgd = pgd_offset(mm, addr);
+-	if (pgd_none_or_clear_bad(pgd))
+-		return NULL;
+-
+-	pud = pud_offset(pgd, addr);
+-	if (pud_none_or_clear_bad(pud))
+-		return NULL;
+-
+-	pmd = pmd_offset(pud, addr);
+-	if (pmd_none(*pmd))
+-		return NULL;
+-
+-	return pmd;
+-}
+-
+-static pmd_t *alloc_new_pmd(struct mm_struct *mm, struct vm_area_struct *vma,
+-			    unsigned long addr)
+-{
+-	pgd_t *pgd;
+-	pud_t *pud;
+-	pmd_t *pmd;
+-
+-	pgd = pgd_offset(mm, addr);
+-	pud = pud_alloc(mm, pgd, addr);
+-	if (!pud)
+-		return NULL;
+-
+-	pmd = pmd_alloc(mm, pud, addr);
+-	if (!pmd)
+-		return NULL;
+-
+-	VM_BUG_ON(pmd_trans_huge(*pmd));
+-
+-	return pmd;
+-}
+-
+-static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
+-		unsigned long old_addr, unsigned long old_end,
+-		struct vm_area_struct *new_vma, pmd_t *new_pmd,
+-		unsigned long new_addr, bool need_rmap_locks)
+-{
+-	struct address_space *mapping = NULL;
+-	struct anon_vma *anon_vma = NULL;
+-	struct mm_struct *mm = vma->vm_mm;
+-	pte_t *old_pte, *new_pte, pte;
+-	spinlock_t *old_ptl, *new_ptl;
+-
+-	/*
+-	 * When need_rmap_locks is true, we take the i_mmap_mutex and anon_vma
+-	 * locks to ensure that rmap will always observe either the old or the
+-	 * new ptes. This is the easiest way to avoid races with
+-	 * truncate_pagecache(), page migration, etc...
+-	 *
+-	 * When need_rmap_locks is false, we use other ways to avoid
+-	 * such races:
+-	 *
+-	 * - During exec() shift_arg_pages(), we use a specially tagged vma
+-	 *   which rmap call sites look for using is_vma_temporary_stack().
+-	 *
+-	 * - During mremap(), new_vma is often known to be placed after vma
+-	 *   in rmap traversal order. This ensures rmap will always observe
+-	 *   either the old pte, or the new pte, or both (the page table locks
+-	 *   serialize access to individual ptes, but only rmap traversal
+-	 *   order guarantees that we won't miss both the old and new ptes).
+-	 */
+-	if (need_rmap_locks) {
+-		if (vma->vm_file) {
+-			mapping = vma->vm_file->f_mapping;
+-			mutex_lock(&mapping->i_mmap_mutex);
+-		}
+-		if (vma->anon_vma) {
+-			anon_vma = vma->anon_vma;
+-			anon_vma_lock_write(anon_vma);
+-		}
+-	}
+-
+-	/*
+-	 * We don't have to worry about the ordering of src and dst
+-	 * pte locks because exclusive mmap_sem prevents deadlock.
+-	 */
+-	old_pte = pte_offset_map_lock(mm, old_pmd, old_addr, &old_ptl);
+-	new_pte = pte_offset_map(new_pmd, new_addr);
+-	new_ptl = pte_lockptr(mm, new_pmd);
+-	if (new_ptl != old_ptl)
+-		spin_lock_nested(new_ptl, SINGLE_DEPTH_NESTING);
+-	arch_enter_lazy_mmu_mode();
+-
+-	for (; old_addr < old_end; old_pte++, old_addr += PAGE_SIZE,
+-				   new_pte++, new_addr += PAGE_SIZE) {
+-		if (pte_none(*old_pte))
+-			continue;
+-		pte = ptep_get_and_clear(mm, old_addr, old_pte);
+-		pte = move_pte(pte, new_vma->vm_page_prot, old_addr, new_addr);
+-		set_pte_at(mm, new_addr, new_pte, pte);
+-	}
+-
+-	arch_leave_lazy_mmu_mode();
+-	if (new_ptl != old_ptl)
+-		spin_unlock(new_ptl);
+-	pte_unmap(new_pte - 1);
+-	pte_unmap_unlock(old_pte - 1, old_ptl);
+-	if (anon_vma)
+-		anon_vma_unlock_write(anon_vma);
+-	if (mapping)
+-		mutex_unlock(&mapping->i_mmap_mutex);
+-}
+-
+-#define LATENCY_LIMIT	(64 * PAGE_SIZE)
+-
+-unsigned long move_page_tables(struct vm_area_struct *vma,
+-		unsigned long old_addr, struct vm_area_struct *new_vma,
+-		unsigned long new_addr, unsigned long len,
+-		bool need_rmap_locks)
+-{
+-	unsigned long extent, next, old_end;
+-	pmd_t *old_pmd, *new_pmd;
+-	bool need_flush = false;
+-	unsigned long mmun_start;	/* For mmu_notifiers */
+-	unsigned long mmun_end;		/* For mmu_notifiers */
+-
+-	old_end = old_addr + len;
+-	flush_cache_range(vma, old_addr, old_end);
+-
+-	mmun_start = old_addr;
+-	mmun_end   = old_end;
+-	mmu_notifier_invalidate_range_start(vma->vm_mm, mmun_start, mmun_end);
+-
+-	for (; old_addr < old_end; old_addr += extent, new_addr += extent) {
+-		cond_resched();
+-		next = (old_addr + PMD_SIZE) & PMD_MASK;
+-		/* even if next overflowed, extent below will be ok */
+-		extent = next - old_addr;
+-		if (extent > old_end - old_addr)
+-			extent = old_end - old_addr;
+-		old_pmd = get_old_pmd(vma->vm_mm, old_addr);
+-		if (!old_pmd)
+-			continue;
+-		new_pmd = alloc_new_pmd(vma->vm_mm, vma, new_addr);
+-		if (!new_pmd)
+-			break;
+-		if (pmd_trans_huge(*old_pmd)) {
+-			int err = 0;
+-			if (extent == HPAGE_PMD_SIZE)
+-				err = move_huge_pmd(vma, new_vma, old_addr,
+-						    new_addr, old_end,
+-						    old_pmd, new_pmd);
+-			if (err > 0) {
+-				need_flush = true;
+-				continue;
+-			} else if (!err) {
+-				split_huge_page_pmd(vma, old_addr, old_pmd);
+-			}
+-			VM_BUG_ON(pmd_trans_huge(*old_pmd));
+-		}
+-		if (pmd_none(*new_pmd) && __pte_alloc(new_vma->vm_mm, new_vma,
+-						      new_pmd, new_addr))
+-			break;
+-		next = (new_addr + PMD_SIZE) & PMD_MASK;
+-		if (extent > next - new_addr)
+-			extent = next - new_addr;
+-		if (extent > LATENCY_LIMIT)
+-			extent = LATENCY_LIMIT;
+-		move_ptes(vma, old_pmd, old_addr, old_addr + extent,
+-			  new_vma, new_pmd, new_addr, need_rmap_locks);
+-		need_flush = true;
+-	}
+-	if (likely(need_flush))
+-		flush_tlb_range(vma, old_end-len, old_addr);
+-
+-	mmu_notifier_invalidate_range_end(vma->vm_mm, mmun_start, mmun_end);
+-
+-	return len + old_addr - old_end;	/* how much done */
+-}
+-
+-static unsigned long move_vma(struct vm_area_struct *vma,
+-		unsigned long old_addr, unsigned long old_len,
+-		unsigned long new_len, unsigned long new_addr, bool *locked)
+-{
+-	struct mm_struct *mm = vma->vm_mm;
+-	struct vm_area_struct *new_vma;
+-	unsigned long vm_flags = vma->vm_flags;
+-	unsigned long new_pgoff;
+-	unsigned long moved_len;
+-	unsigned long excess = 0;
+-	unsigned long hiwater_vm;
+-	int split = 0;
+-	int err;
+-	bool need_rmap_locks;
+-
+-	/*
+-	 * We'd prefer to avoid failure later on in do_munmap:
+-	 * which may split one vma into three before unmapping.
+-	 */
+-	if (mm->map_count >= sysctl_max_map_count - 3)
+-		return -ENOMEM;
+-
+-	/*
+-	 * Advise KSM to break any KSM pages in the area to be moved:
+-	 * it would be confusing if they were to turn up at the new
+-	 * location, where they happen to coincide with different KSM
+-	 * pages recently unmapped.  But leave vma->vm_flags as it was,
+-	 * so KSM can come around to merge on vma and new_vma afterwards.
+-	 */
+-	err = ksm_madvise(vma, old_addr, old_addr + old_len,
+-						MADV_UNMERGEABLE, &vm_flags);
+-	if (err)
+-		return err;
+-
+-	new_pgoff = vma->vm_pgoff + ((old_addr - vma->vm_start) >> PAGE_SHIFT);
+-	new_vma = copy_vma(&vma, new_addr, new_len, new_pgoff,
+-			   &need_rmap_locks);
+-	if (!new_vma)
+-		return -ENOMEM;
+-
+-	moved_len = move_page_tables(vma, old_addr, new_vma, new_addr, old_len,
+-				     need_rmap_locks);
+-	if (moved_len < old_len) {
+-		/*
+-		 * On error, move entries back from new area to old,
+-		 * which will succeed since page tables still there,
+-		 * and then proceed to unmap new area instead of old.
+-		 */
+-		move_page_tables(new_vma, new_addr, vma, old_addr, moved_len,
+-				 true);
+-		vma = new_vma;
+-		old_len = new_len;
+-		old_addr = new_addr;
+-		new_addr = -ENOMEM;
+-	}
+-
+-	/* Conceal VM_ACCOUNT so old reservation is not undone */
+-	if (vm_flags & VM_ACCOUNT) {
+-		vma->vm_flags &= ~VM_ACCOUNT;
+-		excess = vma->vm_end - vma->vm_start - old_len;
+-		if (old_addr > vma->vm_start &&
+-		    old_addr + old_len < vma->vm_end)
+-			split = 1;
+-	}
+-
+-	/*
+-	 * If we failed to move page tables we still do total_vm increment
+-	 * since do_munmap() will decrement it by old_len == new_len.
+-	 *
+-	 * Since total_vm is about to be raised artificially high for a
+-	 * moment, we need to restore high watermark afterwards: if stats
+-	 * are taken meanwhile, total_vm and hiwater_vm appear too high.
+-	 * If this were a serious issue, we'd add a flag to do_munmap().
+-	 */
+-	hiwater_vm = mm->hiwater_vm;
+-	vm_stat_account(mm, vma->vm_flags, vma->vm_file, new_len>>PAGE_SHIFT);
+-
+-	if (do_munmap(mm, old_addr, old_len) < 0) {
+-		/* OOM: unable to split vma, just get accounts right */
+-		vm_unacct_memory(excess >> PAGE_SHIFT);
+-		excess = 0;
+-	}
+-	mm->hiwater_vm = hiwater_vm;
+-
+-	/* Restore VM_ACCOUNT if one or two pieces of vma left */
+-	if (excess) {
+-		vma->vm_flags |= VM_ACCOUNT;
+-		if (split)
+-			vma->vm_next->vm_flags |= VM_ACCOUNT;
+-	}
+-
+-	if (vm_flags & VM_LOCKED) {
+-		mm->locked_vm += new_len >> PAGE_SHIFT;
+-		*locked = true;
+-	}
+-
+-	return new_addr;
+-}
+-
+-static struct vm_area_struct *vma_to_resize(unsigned long addr,
+-	unsigned long old_len, unsigned long new_len, unsigned long *p)
+-{
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma = find_vma(mm, addr);
+-
+-	if (!vma || vma->vm_start > addr)
+-		goto Efault;
+-
+-	if (is_vm_hugetlb_page(vma))
+-		goto Einval;
+-
+-	/* We can't remap across vm area boundaries */
+-	if (old_len > vma->vm_end - addr)
+-		goto Efault;
+-
+-	/* Need to be careful about a growing mapping */
+-	if (new_len > old_len) {
+-		unsigned long pgoff;
+-
+-		if (vma->vm_flags & (VM_DONTEXPAND | VM_PFNMAP))
+-			goto Efault;
+-		pgoff = (addr - vma->vm_start) >> PAGE_SHIFT;
+-		pgoff += vma->vm_pgoff;
+-		if (pgoff + (new_len >> PAGE_SHIFT) < pgoff)
+-			goto Einval;
+-	}
+-
+-	if (vma->vm_flags & VM_LOCKED) {
+-		unsigned long locked, lock_limit;
+-		locked = mm->locked_vm << PAGE_SHIFT;
+-		lock_limit = rlimit(RLIMIT_MEMLOCK);
+-		locked += new_len - old_len;
+-		if (locked > lock_limit && !capable(CAP_IPC_LOCK))
+-			goto Eagain;
+-	}
+-
+-	if (!may_expand_vm(mm, (new_len - old_len) >> PAGE_SHIFT))
+-		goto Enomem;
+-
+-	if (vma->vm_flags & VM_ACCOUNT) {
+-		unsigned long charged = (new_len - old_len) >> PAGE_SHIFT;
+-		if (security_vm_enough_memory_mm(mm, charged))
+-			goto Efault;
+-		*p = charged;
+-	}
+-
+-	return vma;
+-
+-Efault:	/* very odd choice for most of the cases, but... */
+-	return ERR_PTR(-EFAULT);
+-Einval:
+-	return ERR_PTR(-EINVAL);
+-Enomem:
+-	return ERR_PTR(-ENOMEM);
+-Eagain:
+-	return ERR_PTR(-EAGAIN);
+-}
+-
+-static unsigned long mremap_to(unsigned long addr, unsigned long old_len,
+-		unsigned long new_addr, unsigned long new_len, bool *locked)
+-{
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
+-	unsigned long ret = -EINVAL;
+-	unsigned long charged = 0;
+-	unsigned long map_flags;
+-
+-	if (new_addr & ~PAGE_MASK)
+-		goto out;
+-
+-	if (new_len > TASK_SIZE || new_addr > TASK_SIZE - new_len)
+-		goto out;
+-
+-	/* Check if the location we're moving into overlaps the
+-	 * old location at all, and fail if it does.
+-	 */
+-	if ((new_addr <= addr) && (new_addr+new_len) > addr)
+-		goto out;
+-
+-	if ((addr <= new_addr) && (addr+old_len) > new_addr)
+-		goto out;
+-
+-	ret = do_munmap(mm, new_addr, new_len);
+-	if (ret)
+-		goto out;
+-
+-	if (old_len >= new_len) {
+-		ret = do_munmap(mm, addr+new_len, old_len - new_len);
+-		if (ret && old_len != new_len)
+-			goto out;
+-		old_len = new_len;
+-	}
+-
+-	vma = vma_to_resize(addr, old_len, new_len, &charged);
+-	if (IS_ERR(vma)) {
+-		ret = PTR_ERR(vma);
+-		goto out;
+-	}
+-
+-	map_flags = MAP_FIXED;
+-	if (vma->vm_flags & VM_MAYSHARE)
+-		map_flags |= MAP_SHARED;
+-
+-	ret = get_unmapped_area(vma->vm_file, new_addr, new_len, vma->vm_pgoff +
+-				((addr - vma->vm_start) >> PAGE_SHIFT),
+-				map_flags);
+-	if (ret & ~PAGE_MASK)
+-		goto out1;
+-
+-	ret = move_vma(vma, addr, old_len, new_len, new_addr, locked);
+-	if (!(ret & ~PAGE_MASK))
+-		goto out;
+-out1:
+-	vm_unacct_memory(charged);
+-
+-out:
+-	return ret;
+-}
+-
+-static int vma_expandable(struct vm_area_struct *vma, unsigned long delta)
+-{
+-	unsigned long end = vma->vm_end + delta;
+-	if (end < vma->vm_end) /* overflow */
+-		return 0;
+-	if (vma->vm_next && vma->vm_next->vm_start < end) /* intersection */
+-		return 0;
+-	if (get_unmapped_area(NULL, vma->vm_start, end - vma->vm_start,
+-			      0, MAP_FIXED) & ~PAGE_MASK)
+-		return 0;
+-	return 1;
+-}
+-
+-/*
+- * Expand (or shrink) an existing mapping, potentially moving it at the
+- * same time (controlled by the MREMAP_MAYMOVE flag and available VM space)
+- *
+- * MREMAP_FIXED option added 5-Dec-1999 by Benjamin LaHaise
+- * This option implies MREMAP_MAYMOVE.
+- */
+-SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
+-		unsigned long, new_len, unsigned long, flags,
+-		unsigned long, new_addr)
+-{
+-	struct mm_struct *mm = current->mm;
+-	struct vm_area_struct *vma;
+-	unsigned long ret = -EINVAL;
+-	unsigned long charged = 0;
+-	bool locked = false;
+-
+-	down_write(&current->mm->mmap_sem);
+-
+-	if (flags & ~(MREMAP_FIXED | MREMAP_MAYMOVE))
+-		goto out;
+-
+-	if (addr & ~PAGE_MASK)
+-		goto out;
+-
+-	old_len = PAGE_ALIGN(old_len);
+-	new_len = PAGE_ALIGN(new_len);
+-
+-	/*
+-	 * We allow a zero old-len as a special case
+-	 * for DOS-emu "duplicate shm area" thing. But
+-	 * a zero new-len is nonsensical.
+-	 */
+-	if (!new_len)
+-		goto out;
+-
+-	if (flags & MREMAP_FIXED) {
+-		if (flags & MREMAP_MAYMOVE)
+-			ret = mremap_to(addr, old_len, new_addr, new_len,
+-					&locked);
+-		goto out;
+-	}
+-
+-	/*
+-	 * Always allow a shrinking remap: that just unmaps
+-	 * the unnecessary pages..
+-	 * do_munmap does all the needed commit accounting
+-	 */
+-	if (old_len >= new_len) {
+-		ret = do_munmap(mm, addr+new_len, old_len - new_len);
+-		if (ret && old_len != new_len)
+-			goto out;
+-		ret = addr;
+-		goto out;
+-	}
+-
+-	/*
+-	 * Ok, we need to grow..
+-	 */
+-	vma = vma_to_resize(addr, old_len, new_len, &charged);
+-	if (IS_ERR(vma)) {
+-		ret = PTR_ERR(vma);
+-		goto out;
+-	}
+-
+-	/* old_len exactly to the end of the area..
+-	 */
+-	if (old_len == vma->vm_end - addr) {
+-		/* can we just expand the current mapping? */
+-		if (vma_expandable(vma, new_len - old_len)) {
+-			int pages = (new_len - old_len) >> PAGE_SHIFT;
+-
+-			if (vma_adjust(vma, vma->vm_start, addr + new_len,
+-				       vma->vm_pgoff, NULL)) {
+-				ret = -ENOMEM;
+-				goto out;
+-			}
+-
+-			vm_stat_account(mm, vma->vm_flags, vma->vm_file, pages);
+-			if (vma->vm_flags & VM_LOCKED) {
+-				mm->locked_vm += pages;
+-				locked = true;
+-				new_addr = addr;
+-			}
+-			ret = addr;
+-			goto out;
+-		}
+-	}
+-
+-	/*
+-	 * We weren't able to just expand or shrink the area,
+-	 * we need to create a new one and move it..
+-	 */
+-	ret = -ENOMEM;
+-	if (flags & MREMAP_MAYMOVE) {
+-		unsigned long map_flags = 0;
+-		if (vma->vm_flags & VM_MAYSHARE)
+-			map_flags |= MAP_SHARED;
+-
+-		new_addr = get_unmapped_area(vma->vm_file, 0, new_len,
+-					vma->vm_pgoff +
+-					((addr - vma->vm_start) >> PAGE_SHIFT),
+-					map_flags);
+-		if (new_addr & ~PAGE_MASK) {
+-			ret = new_addr;
+-			goto out;
+-		}
+-
+-		ret = move_vma(vma, addr, old_len, new_len, new_addr, &locked);
+-	}
+-out:
+-	if (ret & ~PAGE_MASK)
+-		vm_unacct_memory(charged);
+-	up_write(&current->mm->mmap_sem);
+-	if (locked && new_len > old_len)
+-		mm_populate(new_addr + old_len, new_len - old_len);
+-	return ret;
+-}
+diff -Nau8r ./linux-mri/mm/page_alloc.c ./linux-3.10.5/mm/page_alloc.c
+--- ./linux-mri/mm/page_alloc.c	2013-08-18 16:34:42.989364410 -0700
++++ ./linux-3.10.5/mm/page_alloc.c	2013-08-04 01:51:49.000000000 -0700
+@@ -6205,19 +6205,16 @@
+ 	{1UL << PG_mlocked,		"mlocked"	},
+ #endif
+ #ifdef CONFIG_ARCH_USES_PG_UNCACHED
+ 	{1UL << PG_uncached,		"uncached"	},
+ #endif
+ #ifdef CONFIG_MEMORY_FAILURE
+ 	{1UL << PG_hwpoison,		"hwpoison"	},
+ #endif
+-#ifdef CONFIG_PMEM_MODULES
+-	{1UL << PG_pmem_module,		"pmem_module"	},
+-#endif
+ #ifdef CONFIG_TRANSPARENT_HUGEPAGE
+ 	{1UL << PG_compound_lock,	"compound_lock"	},
+ #endif
+ };
+ 
+ static void dump_page_flags(unsigned long flags)
+ {
+ 	const char *delim = "";
+diff -Nau8r ./linux-mri/mm/sparse.c ./linux-3.10.5/mm/sparse.c
+--- ./linux-mri/mm/sparse.c	2013-08-18 16:23:03.480638328 -0700
++++ ./linux-3.10.5/mm/sparse.c	2013-08-04 01:51:49.000000000 -0700
+@@ -600,42 +600,21 @@
+ 	vmemmap_populate_print_last();
+ 
+ #ifdef CONFIG_SPARSEMEM_ALLOC_MEM_MAP_TOGETHER
+ 	free_bootmem(__pa(map_map), size2);
+ #endif
+ 	free_bootmem(__pa(usemap_map), size);
+ }
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-static inline int pmem_modules_sparse_mem_map_populate(unsigned long pnum,
+-		int nid)
+-{
+-	struct pmem_module_struct *pmem_module = pmem_modules;
+-	int success = true;
+-	while (pmem_module) {
+-		BUG_ON(!pmem_module->pmem_module_ops->sparse_mem_map_populate);
+-		success &=
+-			pmem_module->pmem_module_ops->sparse_mem_map_populate(
+-					pnum, nid);
+-		pmem_module = pmem_module->next;
+-	}
+-	return success;
+-}
+-#endif
+-
+ #ifdef CONFIG_MEMORY_HOTPLUG
+ #ifdef CONFIG_SPARSEMEM_VMEMMAP
+ static inline struct page *kmalloc_section_memmap(unsigned long pnum, int nid,
+ 						 unsigned long nr_pages)
+ {
+-#ifdef CONFIG_PMEM_MODULES
+-	if (!pmem_modules_sparse_mem_map_populate(pnum, nid))
+-		return NULL;
+-#endif 
+ 	/* This will make the necessary allocations eventually. */
+ 	return sparse_mem_map_populate(pnum, nid);
+ }
+ static void __kfree_section_memmap(struct page *memmap, unsigned long nr_pages)
+ {
+ 	unsigned long start = (unsigned long)memmap;
+ 	unsigned long end = (unsigned long)(memmap + nr_pages);
+ 
+diff -Nau8r ./linux-mri/mm/swap.c ./linux-3.10.5/mm/swap.c
+--- ./linux-mri/mm/swap.c	2013-08-18 16:24:38.028238712 -0700
++++ ./linux-3.10.5/mm/swap.c	2013-08-04 01:51:49.000000000 -0700
+@@ -155,22 +155,16 @@
+ 			__put_compound_page(page);
+ 		else
+ 			__put_single_page(page);
+ 	}
+ }
+ 
+ void put_page(struct page *page)
+ {
+-#ifdef CONFIG_PMEM_MODULES
+-	if (unlikely(PagePmemModule(page))) {
+-		pmem_modules_put_page(page);
+-		return;
+-	}
+-#endif /* CONFIG_PMEM_MODULES */
+ 	if (unlikely(PageCompound(page)))
+ 		put_compound_page(page);
+ 	else if (put_page_testzero(page))
+ 		__put_single_page(page);
+ }
+ EXPORT_SYMBOL(put_page);
+ 
+ /*
+@@ -680,27 +674,16 @@
+ 	LIST_HEAD(pages_to_free);
+ 	struct zone *zone = NULL;
+ 	struct lruvec *lruvec;
+ 	unsigned long uninitialized_var(flags);
+ 
+ 	for (i = 0; i < nr; i++) {
+ 		struct page *page = pages[i];
+ 
+-#ifdef CONFIG_PMEM_MODULES
+-		if (unlikely(PagePmemModule(page))) {
+-			if (zone) {
+-				spin_unlock_irqrestore(&zone->lru_lock, flags);
+-				zone = NULL;
+-			}
+-			pmem_modules_put_page(page);
+-			continue;
+-		}
+-#endif /* CONFIG_PMEM_MODULES */
+- 
+ 		if (unlikely(PageCompound(page))) {
+ 			if (zone) {
+ 				spin_unlock_irqrestore(&zone->lru_lock, flags);
+ 				zone = NULL;
+ 			}
+ 			put_compound_page(page);
+ 			continue;
+ 		}

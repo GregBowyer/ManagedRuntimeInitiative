@@ -2492,22 +2492,14 @@ int az_pmem_nr_pages_sysctl(struct ctl_table *table, int write,
 #endif /* CONFIG_SYSCTL */
 #endif
 
-static int azmm_pfs_pmem_read(char *page, char **start,
-		off_t off, int count, 
-		int *eof, void *data)
+static int azmm_pfs_pmem_show(struct seq_file *m, void *v)
 {
 	unsigned long nr_zfree, nr_nzfree, nr_pools;
 	int i;
 	int64_t fnd_balance;
 	unsigned long fnd_max;
-	char *p = page;
 	struct az_pmem_pool *pool;
 	unsigned long nr_prefs = 0;
-
-	if (off) {
-		*eof = 1;
-		return 0;
-	}
 
 	spin_lock(&az_pmem_global_lock);
 	nr_nzfree = az_nr_nzfree_pages;
@@ -2521,7 +2513,7 @@ static int azmm_pfs_pmem_read(char *page, char **start,
 		}
 	}
 	spin_unlock(&az_pmem_global_lock);
-	p += sprintf(p,
+	seq_printf(m,
 			"AZMM_PAGE_SIZE:         %lu kB\n"
 			"AZMM_REQUESTED_PAGES:   %lu\n"
 			"AZMM_ALLOCATED_PAGES:   %lu\n"
@@ -2532,22 +2524,33 @@ static int azmm_pfs_pmem_read(char *page, char **start,
 			atomic_long_read(&az_nr_pages_allocated),
 			nr_nzfree, nr_zfree);
 	if (nr_pools)
-		p += sprintf(p, "AZMM_XPROCESS_POOLS:    %lu/%lu\n", nr_pools,
+		seq_printf(m, "AZMM_XPROCESS_POOLS:    %lu/%lu\n", nr_pools,
 				nr_prefs);
-	p += sprintf(p, "AZMM_FUNDS (Bal/Max): ");
+	seq_printf(m, "AZMM_FUNDS (Bal/Max): ");
 	for (i = 0; i < AZMFT_NR_FUND_TYPES; i++) {
 		spin_lock(&az_pmem_funds[i].azmf_lock);
 		fnd_balance = az_pmem_funds[i].azmf_balance;
 		fnd_max = az_pmem_funds[i].azmf_maximum;
 		spin_unlock(&az_pmem_funds[i].azmf_lock);
 		if (fnd_max)
-			p += sprintf(p, "[%d]%lld/%lu kB  ", i,
+			seq_printf(m, "[%d]%lld/%lu kB  ", i,
 					(fnd_balance >> 10), (fnd_max >> 10));
 	}
-	p += sprintf(p, "\n");
-	return (p - page);
+	seq_printf(m, "\n");
+	return 0;
 }
 
+static int azmm_pfs_pmem_open(struct inode *inode, struct file *file)
+{
+    return single_open(file, azmm_pfs_pmem_show, NULL);
+}
+
+static const struct file_operations azmm_pfs_proc_fops = {
+    .open    = azmm_pfs_pmem_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = seq_release,
+};
 
 static void __exit az_exit_pmem_procfs(void)
 {
@@ -2561,8 +2564,8 @@ static int __init az_init_pmem_procfs(void)
 	if (!azmm_pfs_root)
 		return -ENOMEM;
 	//azmm_pfs_root->owner = THIS_MODULE;
-	azmm_pfs_pmem = create_proc_read_entry("pmem", 0, azmm_pfs_root,
-			azmm_pfs_pmem_read, NULL);
+    azmm_pfs_pmem = proc_create_data("pmem", 0, azmm_pfs_root,
+            &azmm_pfs_proc_fops, NULL);
 	if (!azmm_pfs_pmem) {
 		remove_proc_entry((THIS_MODULE)->name, NULL);
 		return -ENOMEM;

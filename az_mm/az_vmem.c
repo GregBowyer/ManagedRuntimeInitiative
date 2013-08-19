@@ -4349,7 +4349,7 @@ out:
 err_fault:
 	ret = -EFAULT;
 err:
-	do_munmap(current->mm, addr, len);
+	vm_munmap(addr, len);
 	goto out;
 }
 
@@ -4395,7 +4395,7 @@ unsigned long do_az_munreserve(unsigned long addr, size_t len)
 	if (current->mm->azm_acct_pool)
 		az_pmem_pool_stats(&current->mm->azm_acct_pool->azm_pool);
 #endif /* AZ_MM_DEBUG */
-	ret = do_munmap(current->mm, addr, len);
+	ret = vm_munmap(addr, len);
 #ifdef AZ_MM_DEBUG
 	if (current->mm->azm_acct_pool)
 		az_pmem_pool_stats(&current->mm->azm_acct_pool->azm_pool);
@@ -4919,7 +4919,7 @@ int do_az_mbatch_commit(void)
  * ones exists. It should be called when memory system attempts to unmap
  * a batchable vm_area or otherwise free page tables within a batchable
  * vm_area. A common cause would be a call to az_unreserve on a batchable
- * area (which will use the do_munmap() path), or a direct munmap() of one.
+ * area (which will use the vm_munmap() path), or a direct munmap() of one.
  *
  * Caller must hold mmap_sem write or stronger equiv. (e.g. mm_exit
  * may unmap areas and free page tables without holding the mmap_sem).

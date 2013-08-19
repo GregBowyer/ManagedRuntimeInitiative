@@ -497,19 +497,12 @@ static int az_init_vmemmap(void)
 
 static struct task_struct *az_get_task_struct(pid_t pid)
 {
+	// Greg B - I do not like this declaration ..
 	struct task_struct *tsk;
-
-	read_lock(&tasklist_lock);
-	tsk = pid_task(pid, PIDTYPE_PID);
-	if (!tsk || (tsk->flags & PF_EXITING))
-		goto err_unlock;
-	get_task_struct(tsk);   /* Hold refcount for this task */
-	read_unlock(&tasklist_lock);
+	tsk = pid_task(find_vpid(pid), PIDTYPE_PID);
+	if (!tsk)
+		return ERR_PTR(-ESRCH);
 	return tsk;
-
-err_unlock:
-	read_unlock(&tasklist_lock);
-	return ERR_PTR(-ESRCH);
 }
 
 /* Lock in the order based on the addresses */

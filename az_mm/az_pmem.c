@@ -433,7 +433,7 @@ static int az_populate_vmemmap(unsigned long addr, unsigned long end, int node)
 	return 0;
 }
 
-int az_sparse_mem_map_populate(unsigned long pnum, int nid)
+int __meminit az_sparse_mem_map_populate(unsigned long pnum, int nid)
 {
 	unsigned long start =
 		(unsigned long)az_pfn_to_az_page(pnum * AZ_PAGES_PER_SECTION);
@@ -2596,14 +2596,14 @@ int az_pmem_get_page_if_owned(struct page *page)
 	return 0;
 }
 
-int az_pmem_sparse_mem_map_populate(unsigned long pnum, int nid)
+int __meminit az_pmem_sparse_mem_map_populate(unsigned long pnum, int nid)
 {
 	if (az_sparse_mem_map_populate(pnum, nid))
 		return -ENOMEM;
 	return 0;
 }
 
-int az_pmem_init(void)
+int __meminit az_pmem_init(void)
 {
 	int ret;
 

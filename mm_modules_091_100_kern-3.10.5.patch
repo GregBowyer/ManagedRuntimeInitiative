@@ -5263,7 +5263,7 @@ diff -Nau8r ./linux-mri/mm/mlock.c ./linux-3.10.5/mm/mlock.c
  	if (newflags == vma->vm_flags || (vma->vm_flags & VM_SPECIAL) ||
 -	    is_vm_hugetlb_page(vma) ||
 -#ifdef CONFIG_MM_MODULES
--        (vma->mm_modules_ops) ||
+-        (vma->mm_module_ops) ||
 -#endif
 -        vma == get_gate_vma(current->mm))
 +	    is_vm_hugetlb_page(vma) || vma == get_gate_vma(current->mm))

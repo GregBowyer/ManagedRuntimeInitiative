@@ -5182,7 +5182,7 @@ long az_ioc_mprobe(pid_t pid, unsigned long addr, int flags, int __user* refcnt_
 		if(!capable(CAP_SYS_ADMIN))
 			return -EPERM;
 		read_lock(&tasklist_lock);
-		tsk = find_task_by_vpid(pid);
+		tsk = pid_task(pid, PIDTYPE_PID);
 		if (!tsk || (tsk->flags & PF_EXITING)) {
 			read_unlock(&tasklist_lock);
 			return -ESRCH;

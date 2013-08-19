@@ -500,7 +500,7 @@ static struct task_struct *az_get_task_struct(pid_t pid)
 	struct task_struct *tsk;
 
 	read_lock(&tasklist_lock);
-	tsk = find_task_by_vpid(pid);
+	tsk = pid_task(pid, PIDTYPE_PID);
 	if (!tsk || (tsk->flags & PF_EXITING))
 		goto err_unlock;
 	get_task_struct(tsk);   /* Hold refcount for this task */

@@ -36,6 +36,7 @@
 #include <linux/proc_fs.h>
 #include <linux/syscalls.h>
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
 #include <asm/tlb.h>

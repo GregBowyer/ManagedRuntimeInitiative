@@ -39,6 +39,7 @@
 #include <linux/kallsyms.h>
 #include <linux/memcontrol.h>
 #include <linux/mmu_notifier.h>
+#include <linux/sched.h>
 
 #include <linux/err.h>
 #include <linux/syscalls.h>

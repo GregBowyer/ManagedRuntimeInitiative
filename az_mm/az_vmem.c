@@ -406,7 +406,7 @@
  */
 /***********************************************************************/
 
-static void az_mm_terminate_mbatch(struct mmu_gather **tlbp);
+static void az_mm_terminate_mbatch(struct mmu_gather *tlb);
 int do_az_mprotect(unsigned long addr, size_t len, int prot,
 		int flags, int shadow_only);
 int az_populate_shadow_pmd(az_mmstate *mms,
@@ -507,10 +507,10 @@ void az_vmem_exit_mm(az_mmstate *mms)
 	long nr_pgrefs = nr_pgrefs_taken - nr_pgrefs_released;
 	long nr_p2p = nr_p2p_taken - nr_p2p_released;
 	if (mms->shadow_pgd || mms->prev_main_pgd) {
-		struct mmu_gather *tlb;
-		tlb = tlb_gather_mmu(current->mm, true);
+		struct mmu_gather tlb;
+		tlb_gather_mmu(&tlb, current->mm, true);
 		az_mm_terminate_mbatch(&tlb);
-		tlb_finish_mmu(tlb, 0, 0);
+		tlb_finish_mmu(&tlb, 0, 0);
 	}
 
 	if (nr_ptes || nr_pgrefs || nr_p2p) {
@@ -1706,9 +1706,9 @@ void az_commit_shadow_pgd(struct mm_struct *mm, pgd_t *shadow_pgd_root)
  * Expects the shadow pgd to already be disconnected from the mm. 
  */
 
-void az_free_shadow_pgd(struct mmu_gather **tlbp, pgd_t *shadow_pgd)
+void az_free_shadow_pgd(struct mmu_gather *tlb, pgd_t *shadow_pgd)
 {
-	struct mm_struct *mm = (*tlbp)->mm;
+	struct mm_struct *mm = tlb->mm;
 	struct vm_area_struct *vma = mm->mmap;
 	unsigned long end = 0;
 	az_mmstate *mms = az_mm_mmstate(mm);
@@ -1726,7 +1726,7 @@ void az_free_shadow_pgd(struct mmu_gather **tlbp, pgd_t *shadow_pgd)
 		vma = vma->vm_next;
 	}
 	/* free shadow pgd hierarchy for entire range: */
-	az_free_root_pgd_range(*tlbp, shadow_pgd,
+	az_free_root_pgd_range(tlb, shadow_pgd,
 			FIRST_USER_ADDRESS, end,
 			FIRST_USER_ADDRESS, 0);
 
@@ -3035,7 +3035,7 @@ err_fault:
 	return -EFAULT;
 }
 
-unsigned long az_mm_unmap_page_range(struct mmu_gather **tlbp,
+unsigned long az_mm_unmap_page_range(struct mmu_gather *tlb,
 		struct vm_area_struct *vma,
 		unsigned long addr, unsigned long end,
 		long *zap_work, struct zap_details *details)
@@ -3043,7 +3043,7 @@ unsigned long az_mm_unmap_page_range(struct mmu_gather **tlbp,
 	int ret;
 	unsigned long start = addr;
 	if (az_mm_batchable_vma(vma))
-		az_mm_terminate_mbatch(tlbp);
+		az_mm_terminate_mbatch(tlb);
 	az_prep_vma_for_unmap(vma);
 	ret = az_unmap_page_range(vma, start, end,
 			&start, zap_work, AZMM_BLIND_UNMAP,
@@ -3971,7 +3971,7 @@ int az_populate_large_page(az_mmstate *mms,
 	}
 	set_pte_at(mm, address, (pte_t *)pmd, entry);
 
-	update_mmu_cache(vma, address, entry);
+	update_mmu_cache(vma, address, &entry);
 
 	spin_unlock(ptl);
 	return 0;
@@ -4137,7 +4137,7 @@ int az_populate_small_page(az_mmstate *mms,
 	set_pte_at(mm, address, pte, entry);
 
 	/* No need to invalidate - it was non-present before */
-	update_mmu_cache(vma, address, entry);
+	update_mmu_cache(vma, address, &entry);
 
 	spin_unlock(ptl);
 	return 0;
@@ -4226,15 +4226,17 @@ err:
 unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 		struct vm_area_struct *aliased_vma)
 {
-	printk("Entered do_az_mreserve\n");
 	struct vm_area_struct * vma;
 	az_mmstate *mms;
+
 	int az_flags =  MAP_ANONYMOUS | MAP_PRIVATE | MAP_FIXED;
 	int az_prot = PROT_NONE;
 	unsigned long ret;
 	int batchable = flags & AZMM_BATCHABLE;
 	int aliasable = flags & AZMM_ALIASABLE;
 	unsigned long az_mm_flags = flags & (AZMM_BATCHABLE | AZMM_ALIASABLE);
+
+	printk("Entered do_az_mreserve\n");
 
 	if ((addr & ~PMD_MASK) || (len & ~PMD_MASK))
 		return -EINVAL;
@@ -4261,7 +4263,7 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 	if (vma) {
 #ifdef CONFIG_AZMM_DEBUG
 		printk(KERN_WARNING "VMA intersection was detected \n");
-		int ret = az_mm_create_vmem_map_dump(vma);
+		ret = az_mm_create_vmem_map_dump(vma);
 		return (ret == 0) ? -EFAULT : ret;
 #else
 		return -EFAULT;
@@ -4272,7 +4274,7 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 	if (!mms || az_mm_init_spinlocks(mms))
 		return -ENOMEM;
 
-	ret = do_mmap_pgoff(NULL, addr, len, az_prot, az_flags, 0);
+	ret = do_mmap_pgoff(NULL, addr, len, az_prot, az_flags, 0, 0);
 
 	if ((long)ret > 0) {
 		/* do_mmap_pgoff() returns >0 if successful. scrub the ret.*/
@@ -4298,6 +4300,7 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 				goto err;
 			az_vma_vmstate(vma)->az_mm_flags = az_mm_flags;
 			/* Only dump the original reservation */
+            /* GB ! How to support VM_ALWAYSDUMP behaviour ?
 			if (aliased_vma) {
 				vma->vm_flags |= AZMM_VM_FLAGS;
 				vma->vm_flags &= ~VM_ALWAYSDUMP;
@@ -4305,6 +4308,10 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 				vma->vm_flags |=
 					(AZMM_VM_FLAGS | VM_ALWAYSDUMP);
 			}
+            */
+
+            // GB compile HACK
+            vma->vm_flags |= AZMM_VM_FLAGS;
 		} else {
 			/* We somehow didn't get the vma we wanted: */
 			goto err;
@@ -4750,10 +4757,11 @@ int do_az_mbatch_start(void)
 	 */
 	if (mms->prev_main_pgd) {
 		pgd_t *shadow_pgd = mms->prev_main_pgd;
-		struct mmu_gather *tlb = tlb_gather_mmu(current->mm, true);
+		struct mmu_gather tlb;
+		tlb_gather_mmu(&tlb, current->mm, true);
 		mms->prev_main_pgd = NULL;
 		az_free_shadow_pgd(&tlb, shadow_pgd);
-		tlb_finish_mmu(tlb, 0, 0);
+		tlb_finish_mmu(&tlb, 0, 0);
 	}
 
 	up_read(&mm->mmap_sem);
@@ -4808,14 +4816,14 @@ int do_az_mbatch_start(void)
 
 	/* Deal with populate errors: */
 	if (ret) {
-		struct mmu_gather *tlb;
+		struct mmu_gather tlb;
 		pgd_t *shadow_pgd = mms->shadow_pgd;
 		mms->shadow_pgd = NULL;
 		downgrade_write(&mm->mmap_sem);
 		if (shadow_pgd) {
-			tlb = tlb_gather_mmu(current->mm, true);
+			tlb_gather_mmu(&tlb, current->mm, true);
 			az_free_shadow_pgd(&tlb, shadow_pgd);
-			tlb_finish_mmu(tlb, 0, 0);
+			tlb_finish_mmu(&tlb, 0, 0);
 		}
 		up_read(&mm->mmap_sem);
 		return ret;
@@ -4919,9 +4927,9 @@ int do_az_mbatch_commit(void)
  * (populated), this will appear as if an interleaved do_az_mbatch_abort()
  * was performed, and further attempts to manipulate the batch will fail.
  */
-static void az_mm_terminate_mbatch(struct mmu_gather **tlbp)
+static void az_mm_terminate_mbatch(struct mmu_gather *tlb)
 {
-	struct mm_struct *mm = (*tlbp)->mm;
+	struct mm_struct *mm = tlb->mm;
 	az_mmstate *mms = az_mm_mmstate(mm);
 	pgd_t *shadow_pgd;
 	/* No option of aborting. must be done unconditionally on exit paths. */
@@ -4933,7 +4941,7 @@ static void az_mm_terminate_mbatch(struct mmu_gather **tlbp)
 		/* Free leftover pgd from latest committed batch: */
 		shadow_pgd = mms->prev_main_pgd;
 		mms->prev_main_pgd = NULL;
-		az_free_shadow_pgd(tlbp, shadow_pgd);
+		az_free_shadow_pgd(tlb, shadow_pgd);
 	}
 
 	shadow_pgd = mms->shadow_pgd;
@@ -4941,14 +4949,14 @@ static void az_mm_terminate_mbatch(struct mmu_gather **tlbp)
 		return;
 	mms->shadow_pgd_populated = false;
 	mms->shadow_pgd = NULL;
-	az_free_shadow_pgd(tlbp, shadow_pgd);
+	az_free_shadow_pgd(tlb, shadow_pgd);
 }
 
 int do_az_mbatch_abort(void)
 {
 	struct mm_struct *mm = current->mm;
 	pgd_t *shadow_pgd;
-	struct mmu_gather *tlb;
+	struct mmu_gather tlb;
 	az_mmstate *mms;
 
 	/* 
@@ -4983,9 +4991,9 @@ int do_az_mbatch_abort(void)
 	 */
 	downgrade_write(&mm->mmap_sem);
 
-	tlb = tlb_gather_mmu(current->mm, true);
+	tlb_gather_mmu(&tlb, current->mm, true);
 	az_free_shadow_pgd(&tlb, shadow_pgd);
-	tlb_finish_mmu(tlb, 0, 0);
+	tlb_finish_mmu(&tlb, 0, 0);
 
 	up_read(&mm->mmap_sem);
 	return 0;
@@ -5044,8 +5052,9 @@ long do_az_mflush(unsigned long acct, int flags, size_t *allocated)
 
 int az_ioc_mreserve(unsigned long addr, size_t len, int flags)
 {
-	printk("Entered az_ioc_mreserve\n");
 	unsigned long ret;
+
+	printk("Entered az_ioc_mreserve\n");
 	down_write(&current->mm->mmap_sem);
 	ret = do_az_mreserve(addr, len, flags, NULL);
 	up_write(&current->mm->mmap_sem);

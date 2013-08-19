@@ -468,7 +468,7 @@ extern int az_mm_follow_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long *position, int *length, int i, int write);
 extern int az_mm_probe_mapped(struct vm_area_struct *vma, unsigned long start,
 		unsigned long *end_range, unsigned long *range_vm_flags);
-extern unsigned long az_mm_unmap_page_range(struct mmu_gather **tlbp,
+extern unsigned long az_mm_unmap_page_range(struct mmu_gather *tlb,
 		struct vm_area_struct *vma, unsigned long addr,
 		unsigned long end, long *zap_work, struct zap_details *details);
 extern void az_mm_free_pgd_range(struct mmu_gather *tlb, unsigned long addr,

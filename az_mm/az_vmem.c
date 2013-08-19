@@ -4275,10 +4275,10 @@ unsigned long do_az_mreserve(unsigned long addr, size_t len, int flags,
 	if (!mms || az_mm_init_spinlocks(mms))
 		return -ENOMEM;
 
-	ret = do_mmap_pgoff(NULL, addr, len, az_prot, az_flags, 0, 0);
+	ret = vm_mmap(NULL, addr, len, az_prot, az_flags, 0);
 
 	if ((long)ret > 0) {
-		/* do_mmap_pgoff() returns >0 if successful. scrub the ret.*/
+		/* vm_mmap() returns >0 if successful. scrub the ret.*/
 		vma = find_vma(current->mm, addr);
 		if (!vma || (addr < vma->vm_start))
 			goto err_fault;
